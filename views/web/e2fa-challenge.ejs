@@ -1,0 +1,58 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+
+  两步验证挑战页：密码已验证通过，需提供第二因子（TOTP / 还原码 / 通行密钥）。
+-->
+
+<section class="e2fa-page auth">
+  <p class="eyebrow">TWO-STEP VERIFICATION</p>
+  <h1>两步验证</h1>
+  <p class="e2fa-muted">账号「<%= username %>」已通过密码校验，请完成两步验证后进入后台。</p>
+  <% if (error) { %><p class="e2fa-error"><%= error %></p><% } %>
+
+  <div class="e2fa-card">
+    <div class="e2fa-method-tabs">
+      <button type="button" class="e2fa-method-tab" data-method="totp">验证器验证码</button>
+      <button type="button" class="e2fa-method-tab" data-method="recovery">还原码</button>
+      <% if (passkeyReady) { %><button type="button" class="e2fa-method-tab" data-method="passkey">通行密钥</button><% } %>
+    </div>
+
+    <div class="e2fa-method-panel" data-method="totp">
+      <form method="post" action="/login/2fa/totp" autocomplete="off">
+        <div class="e2fa-field">
+          <label for="e2fa_code">输入验证器 App 中的 6 位验证码</label>
+          <input id="e2fa_code" class="e2fa-code-input" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" required placeholder="000000" autofocus>
+        </div>
+        <div class="e2fa-actions"><button class="button" type="submit">验证并登录</button></div>
+      </form>
+    </div>
+
+    <div class="e2fa-method-panel" data-method="recovery">
+      <p class="e2fa-muted">无法获取验证码时，可使用一个还原码登录。<strong>每个还原码仅能使用一次</strong>，剩余 <%= remainingRecovery %> 个。</p>
+      <form method="post" action="/login/2fa/recovery" autocomplete="off">
+        <div class="e2fa-field">
+          <label for="e2fa_recovery">还原码（如 morning-apple-bed-egg）</label>
+          <input id="e2fa_recovery" name="code" placeholder="word-word-word-word" autocomplete="off">
+        </div>
+        <div class="e2fa-actions"><button class="button" type="submit">使用还原码登录</button></div>
+      </form>
+    </div>
+
+    <% if (passkeyReady) { %>
+    <div class="e2fa-method-panel" data-method="passkey">
+      <p class="e2fa-muted">使用已绑定的通行密钥（指纹 / 面容 / 安全钥匙）完成验证，不消耗还原码。</p>
+      <div class="e2fa-actions">
+        <button class="button" type="button"
+                data-e2fa-passkey-login
+                data-options-url="/login/2fa/passkey/options"
+                data-verify-url="/login/2fa/passkey">使用通行密钥验证</button>
+      </div>
+    </div>
+    <% } %>
+  </div>
+
+  <a class="e2fa-backlink" href="/logout">← 取消并返回登录</a>
+</section>

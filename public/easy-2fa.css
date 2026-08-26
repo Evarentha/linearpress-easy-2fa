@@ -1,0 +1,66 @@
+/*
+ * Author: MoyuZJ
+ * Team: LinearTeam
+ * Contact: linearteam@foxmail.com
+ * Made by MoyuZJ in China with ♥
+ *
+ * 两步验证 - 样式。采用与 advanced-user-management 相同的卡片/徽章设计语言；
+ * 同时注入前台与后台，类名统一使用 e2fa- 前缀避免冲突。
+ */
+
+:root{--e2fa-accent:#2563eb;--e2fa-danger:#dc2626;--e2fa-warn:#d97706;--e2fa-ok:#16a34a;--e2fa-border:#e4e4e7;--e2fa-text:#18181b;--e2fa-muted:#71717a}
+
+/* ---------------------------------------------------------------- 页面骨架 */
+.e2fa-page{max-width:640px}
+.e2fa-page-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px}
+.e2fa-page-head h1{margin-bottom:4px}
+.e2fa-card{background:#fff;border:1px solid var(--e2fa-border);border-radius:12px;padding:18px 20px;margin:12px 0;line-height:1.8;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.e2fa-card h2{margin:0 0 10px;font-size:17px}
+.e2fa-muted{color:var(--e2fa-muted);font-size:13px}
+.e2fa-center{text-align:center}
+.e2fa-backlink{color:var(--e2fa-accent);font-size:14px;text-decoration:none}
+.e2fa-backlink:hover{text-decoration:underline}
+
+/* ---------------------------------------------------------------- 提示与徽章 */
+.e2fa-notice{padding:10px 14px;border-radius:8px;margin:10px 0;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-size:14px}
+.e2fa-error{padding:10px 14px;border-radius:8px;margin:10px 0;background:#fef2f2;color:var(--e2fa-danger);border:1px solid #fecaca;font-size:14px}
+.e2fa-badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
+.e2fa-badge-ok{background:#dcfce7;color:var(--e2fa-ok)}
+.e2fa-badge-warn{background:#fef3c7;color:var(--e2fa-warn)}
+.e2fa-badge-fail{background:#fee2e2;color:var(--e2fa-danger)}
+.e2fa-badge-off{background:#f4f4f5;color:var(--e2fa-muted)}
+
+/* ---------------------------------------------------------------- 表单 */
+.e2fa-field{margin:10px 0}
+.e2fa-field label{display:block;font-size:13px;color:var(--e2fa-muted);margin-bottom:4px}
+.e2fa-field input[type='text'],.e2fa-field input[type='password'],.e2fa-field select,.e2fa-field input[type='number']{width:100%;padding:9px 12px;border:1px solid var(--e2fa-border);border-radius:8px;font:inherit;box-sizing:border-box;background:#fff}
+.e2fa-code-input{font-family:ui-monospace,Menlo,monospace;font-size:20px;letter-spacing:.4em;text-align:center;text-indent:.4em}
+.e2fa-actions{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+.e2fa-switch-row{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:14px}
+.e2fa-button-danger{background:var(--e2fa-danger)!important;border-color:var(--e2fa-danger)!important}
+
+/* ---------------------------------------------------------------- 挑战页方式切换 */
+.e2fa-method-tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--e2fa-border)}
+.e2fa-method-tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;font:inherit;font-size:14px;color:var(--e2fa-muted);cursor:pointer}
+.e2fa-method-tab[data-active='true']{color:var(--e2fa-accent);border-bottom-color:var(--e2fa-accent);font-weight:600}
+.e2fa-method-panel{display:none}
+.e2fa-method-panel[data-active='true']{display:block}
+
+/* ---------------------------------------------------------------- 二维码绑定 */
+.e2fa-qr-wrap{display:flex;justify-content:center;padding:10px 0}
+.e2fa-qr-wrap svg{width:220px;height:220px;border:1px solid var(--e2fa-border);border-radius:8px}
+.e2fa-secret{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:16px;letter-spacing:.12em;background:#f4f4f5;border:1px dashed var(--e2fa-border);border-radius:8px;padding:8px 14px;user-select:all;word-break:break-all}
+
+/* ---------------------------------------------------------------- 还原码 */
+.e2fa-codes-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}
+@media (max-width:520px){.e2fa-codes-grid{grid-template-columns:1fr}}
+.e2fa-code-item{font-family:ui-monospace,Menlo,monospace;font-size:15px;background:#f8fafc;border:1px solid var(--e2fa-border);border-radius:8px;padding:8px 12px;user-select:all;word-break:break-all}
+.e2fa-code-used{opacity:.45;text-decoration:line-through}
+
+/* ---------------------------------------------------------------- 表格（管理页/通行密钥列表） */
+.e2fa-table{width:100%;border-collapse:collapse;font-size:14px}
+.e2fa-table th,.e2fa-table td{padding:8px 10px;border-bottom:1px solid var(--e2fa-border);text-align:left;vertical-align:middle}
+.e2fa-table th{color:var(--e2fa-muted);font-weight:600;font-size:13px}
+.e2fa-inline-form{display:inline-flex;gap:6px;align-items:center;margin:0}
+.e2fa-status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--e2fa-muted)}
+.e2fa-status-on{background:var(--e2fa-ok)}

@@ -1,0 +1,79 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+
+  账户安全页（/profile/security）：两步验证状态、启用/关闭、重新生成还原码、通行密钥管理。
+-->
+
+<section class="e2fa-page">
+  <div class="e2fa-page-head"><h1>账户安全 · 两步验证</h1><a class="e2fa-backlink" href="/profile">← 返回个人资料</a></div>
+  <% if (notice) { %><p class="e2fa-notice"><%= notice %></p><% } %>
+  <% if (error) { %><p class="e2fa-error"><%= error %></p><% } %>
+
+  <div class="e2fa-card">
+    <h2>当前状态</h2>
+    <p>
+      两步验证：
+      <% if (enabled) { %><span class="e2fa-badge e2fa-badge-ok">已启用</span>
+      <% } else if (strictMode) { %><span class="e2fa-badge e2fa-badge-warn">本站为严格模式，下次登录将要求绑定</span>
+      <% } else { %><span class="e2fa-badge e2fa-badge-off">未启用</span><% } %>
+    </p>
+    <% if (enabled) { %>
+      <p class="e2fa-muted">剩余可用还原码：<strong><%= remainingRecovery %></strong> / 10；通行密钥：<strong><%= passkeys.length %></strong> 把。</p>
+
+      <h2 style="margin-top:16px">关闭两步验证</h2>
+      <form method="post" action="/profile/security/disable" class="e2fa-inline-form">
+        <input name="code" placeholder="输入当前 6 位验证码以确认" required style="min-width:220px;padding:8px 12px;border:1px solid var(--e2fa-border);border-radius:8px;font:inherit">
+        <button class="button e2fa-button-danger" type="submit" data-e2fa-confirm="关闭后登录不再需要两步验证，剩余还原码与通行密钥将被删除。确认关闭吗？">关闭两步验证</button>
+      </form>
+      <p class="e2fa-muted">关闭后若站点为「开启」模式可随时重新启用；「严格」模式下下次登录会强制重新绑定。</p>
+
+      <h2 style="margin-top:16px">重新生成还原码</h2>
+      <form method="post" action="/profile/security/regenerate-recovery" class="e2fa-inline-form">
+        <input name="code" placeholder="输入当前 6 位验证码以确认" required style="min-width:220px;padding:8px 12px;border:1px solid var(--e2fa-border);border-radius:8px;font:inherit">
+        <button class="button" type="submit" data-e2fa-confirm="旧还原码将全部作废，并生成 10 个新码。确认继续吗？">重新生成还原码</button>
+      </form>
+    <% } else { %>
+      <div class="e2fa-actions">
+        <a class="button" href="/profile/security/setup">启用两步验证 →</a>
+      </div>
+    <% } %>
+  </div>
+
+  <% if (webauthnEnabled) { %>
+  <div class="e2fa-card">
+    <h2>通行密钥（WebAuthn）</h2>
+    <p class="e2fa-muted">绑定两步验证后，可添加平台通行密钥（指纹 / 面容 / 安全钥匙）。无法获取验证码时可直接用通行密钥登录，不消耗还原码。</p>
+    <% if (!enabled) { %><p class="e2fa-notice">请先启用两步验证，再添加通行密钥。</p><% } else { %>
+      <% if (passkeys.length) { %>
+      <table class="e2fa-table">
+        <thead><tr><th>名称</th><th>添加时间</th><th>最近使用</th><th></th></tr></thead>
+        <tbody>
+          <% passkeys.forEach((key) => { %>
+          <tr>
+            <td><%= key.name || '未命名密钥' %></td>
+            <td><%= new Date(key.created_at).toLocaleString() %></td>
+            <td><%= key.last_used_at ? new Date(key.last_used_at).toLocaleString() : '从未使用' %></td>
+            <td>
+              <form method="post" action="/profile/security/passkeys/delete" class="e2fa-inline-form">
+                <input type="hidden" name="id" value="<%= key.id %>">
+                <button class="button e2fa-button-danger" type="submit">删除</button>
+              </form>
+            </td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <% } %>
+      <div class="e2fa-actions">
+        <button class="button" type="button"
+                data-e2fa-passkey-register
+                data-options-url="/profile/security/passkeys/options"
+                data-register-url="/profile/security/passkeys/register">＋ 添加通行密钥</button>
+      </div>
+    <% } %>
+  </div>
+  <% } %>
+</section>

@@ -1,0 +1,14 @@
+{
+  "id": "easy-2fa",
+  "name": "两步验证",
+  "version": "1.0.0",
+  "description": "基于 TOTP 的两步验证（兼容 Google Authenticator 等验证器）：关闭/开启/严格开启三种模式，四词还原码单次使用，管理员可对单个用户强制关闭，可选 WebAuthn 通行密钥辅助登录。",
+  "author": "LinearPress",
+  "type": "both",
+  "main": "index.ts",
+  "runtime": "cordis",
+  "views": "views",
+  "public": "public",
+  "styles": ["easy-2fa.css?v=1.0.0"],
+  "scripts": ["easy-2fa.js?v=1.0.0"]
+}

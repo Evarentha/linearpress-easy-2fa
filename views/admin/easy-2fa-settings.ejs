@@ -1,0 +1,55 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+
+  两步验证 · 设置页：模式（关闭 / 开启 / 严格开启）、WebAuthn 开关、签发方名称、TOTP 窗口。
+-->
+
+<div class="ec-settings e2fa-page">
+  <div class="page-head">
+    <h1>两步验证 · 设置</h1>
+    <p class="e2fa-muted">基于 TOTP 标准（RFC 6238），兼容主流验证器 App；保存后即时生效，无需重启。</p>
+  </div>
+  <% const notices = { 'saved': '设置已保存（即时生效）。', 'reset': '已恢复默认设置。' }; %>
+  <% if (notice && notices[notice]) { %><p class="e2fa-notice"><%= notices[notice] %></p><% } else if (notice && !notices[notice]) { %><p class="e2fa-error"><%= notice %></p><% } %>
+
+  <form method="post" action="/admin/easy-2fa/settings">
+    <div class="e2fa-card">
+      <h2>① 验证模式</h2>
+      <label class="e2fa-switch-row"><input type="radio" name="mode" value="off" <%= config.mode === 'off' ? 'checked' : '' %>> <strong>关闭</strong> — 不启用两步验证，所有用户可直接登录。</label>
+      <label class="e2fa-switch-row"><input type="radio" name="mode" value="optional" <%= config.mode === 'optional' ? 'checked' : '' %>> <strong>开启</strong> — 用户可在「个人资料 → 账户安全」选择性启用；启用的用户登录需通过两步验证。</label>
+      <label class="e2fa-switch-row"><input type="radio" name="mode" value="strict" <%= config.mode === 'strict' ? 'checked' : '' %>> <strong>严格开启</strong> — 所有用户必须使用两步验证；未启用的用户在密码校验通过后会被要求先完成绑定才能登录。</label>
+    </div>
+
+    <div class="e2fa-card">
+      <h2>② 签发方名称</h2>
+      <p class="e2fa-muted">显示在验证器 App 的账户条目与 otpauth URI 中，建议使用站点名称。</p>
+      <div class="e2fa-field">
+        <label for="issuer">Issuer</label>
+        <input id="issuer" type="text" name="issuer" value="<%= config.issuer %>" maxlength="48" required>
+      </div>
+      <div class="e2fa-field">
+        <label for="totp_window">校验窗口（± 周期数，容忍设备时钟偏差）</label>
+        <select id="totp_window" name="totp_window">
+          <% [0, 1, 2, 3, 4, 5].forEach((w) => { %><option value="<%= w %>" <%= config.totpWindow === w ? 'selected' : '' %>><%= w %>（± <%= w * 30 %> 秒）</option><% }) %>
+        </select>
+      </div>
+    </div>
+
+    <div class="e2fa-card">
+      <h2>③ WebAuthn 通行密钥（可选）</h2>
+      <label class="e2fa-switch-row"><input type="checkbox" name="webauthn_enable" <%= config.webauthnEnable ? 'checked' : '' %>> 允许用户添加通行密钥作为辅助登录方式</label>
+      <p class="e2fa-notice">注意：通行密钥可代替验证码与还原码完成登录且不消耗还原码，会<strong>降低安全性</strong>，请仅在可信设备环境允许的情况下启用。WebAuthn 需要 HTTPS 或 localhost 访问。</p>
+    </div>
+
+    <div class="e2fa-actions">
+      <button class="button" type="submit">保存设置</button>
+    </div>
+  </form>
+
+  <form method="post" action="/admin/easy-2fa/settings/reset">
+    <button class="button e2fa-button-danger" type="submit" data-e2fa-confirm="恢复默认设置？当前配置将被覆盖（用户已绑定的验证器不受影响）。">恢复默认设置</button>
+  </form>
+</div>

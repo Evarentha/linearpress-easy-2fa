@@ -1,0 +1,24 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+
+  还原码一次性展示页：仅在绑定成功 / 重新生成后由 POST 响应直接渲染，之后无法再查看明文。
+-->
+
+<section class="e2fa-page auth">
+  <p class="eyebrow">RECOVERY CODES</p>
+  <h1>你的还原码</h1>
+  <p class="e2fa-error">请立即把这些还原码保存到安全的地方。每个码仅能使用一次，用于在无法获取验证码时登录；<strong>离开本页后将不再显示明文</strong>。</p>
+
+  <div class="e2fa-card">
+    <div class="e2fa-codes-grid">
+      <% codes.forEach((code) => { %><span class="e2fa-code-item"><%= code %></span><% }) %>
+    </div>
+    <p class="e2fa-muted">共 <%= codes.length %> 个；全部用尽后需联系管理员关闭两步验证并重新绑定。</p>
+    <div class="e2fa-actions">
+      <a class="button" href="/admin">我已保存，进入后台 →</a>
+    </div>
+  </div>
+</section>

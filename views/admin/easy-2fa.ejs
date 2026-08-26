@@ -1,0 +1,46 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+
+  两步验证 · 后台管理页：全部用户的两步验证状态一览 + 对单个用户强制关闭。
+-->
+
+<div class="e2fa-page">
+  <div class="page-head"><h1>两步验证 · 用户管理</h1></div>
+  <% const notices = { 'disabled': '已关闭该用户的两步验证，其还原码与通行密钥一并作废。', 'missing': '未找到该用户或其未启用两步验证。' }; %>
+  <% if (notice && notices[notice]) { %><p class="e2fa-notice"><%= notices[notice] %></p><% } %>
+
+  <div class="e2fa-card">
+    <h2>站点模式：<%= modeLabel %></h2>
+    <p class="e2fa-muted">在<a href="<%= settingsUrl %>">插件设置</a>中调整模式；严格模式下所有用户登录时都会被要求绑定验证器。</p>
+
+    <table class="e2fa-table">
+      <thead><tr><th>用户</th><th>状态</th><th>剩余还原码</th><th>通行密钥</th><th>绑定时间</th><th>操作</th></tr></thead>
+      <tbody>
+        <% if (!rows.length) { %><tr><td colspan="6" class="e2fa-muted">还没有用户启用两步验证。</td><% } %>
+        <% rows.forEach((row) => { %>
+        <tr>
+          <td><strong><%= row.username %></strong><% if (row.is_super_admin) { %> <span class="e2fa-badge e2fa-badge-warn">SUPER ADMIN</span><% } %></td>
+          <td>
+            <% if (row.enabled) { %><span class="e2fa-status-dot e2fa-status-on"></span>已启用
+            <% } else if (row.pending) { %><span class="e2fa-status-dot" style="background:#d97706"></span>待确认
+            <% } else { %><span class="e2fa-status-dot"></span>未启用<% } %>
+          </td>
+          <td><%= row.remainingRecovery %></td>
+          <td><%= row.passkeyCount %></td>
+          <td><%= row.confirmed_at ? new Date(row.confirmed_at).toLocaleString() : '-' %></td>
+          <td>
+            <% if (row.enabled || row.pending) { %>
+            <form method="post" action="/admin/easy-2fa/user/<%= row.user_id %>/disable" class="e2fa-inline-form">
+              <button class="button e2fa-button-danger" type="submit" data-e2fa-confirm="关闭「<%= row.username %>」的两步验证？其剩余还原码与通行密钥将全部删除；严格模式下该用户下次登录需重新绑定。">关闭两步验证</button>
+            </form>
+            <% } else { %><span class="e2fa-muted">—</span><% } %>
+          </td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>

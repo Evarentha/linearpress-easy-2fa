@@ -1,0 +1,8 @@
+{
+  "name": "easy-2fa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LinearPress 两步验证插件：TOTP / 还原码 / WebAuthn 通行密钥，无外部依赖",
+  "type": "module",
+  "main": "index.ts"
+}

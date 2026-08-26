@@ -1,0 +1,41 @@
+<!--
+  Author: MoyuZJ
+  Team: LinearTeam
+  Contact: linearteam@foxmail.com
+  Made by MoyuZJ in China with ♥
+
+  两步验证绑定页：展示 otpauth 二维码与密钥文本，输入有效验证码完成绑定。
+  严格模式下密码通过后强制进入；用户也可在「账户安全」页主动启用。
+-->
+
+<section class="e2fa-page auth">
+  <p class="eyebrow">SETUP TWO-STEP VERIFICATION</p>
+  <h1>绑定两步验证</h1>
+  <% if (enforceStrict) { %>
+    <p class="e2fa-notice">本站已开启严格两步验证：账号「<%= username %>」必须绑定验证器后才能登录。</p>
+  <% } else { %>
+    <p class="e2fa-muted">为账号「<%= username %>」启用两步验证。</p>
+  <% } %>
+  <% if (error) { %><p class="e2fa-error"><%= error %></p><% } %>
+
+  <div class="e2fa-card">
+    <h2>① 使用验证器 App 扫描二维码</h2>
+    <p class="e2fa-muted">支持 Google Authenticator、Microsoft Authenticator、1Password、Aegis、Authy 等任何兼容 TOTP 的应用。</p>
+    <div class="e2fa-qr-wrap"><%- qrSvg %></div>
+
+    <h2>② 或手动输入密钥</h2>
+    <p class="e2fa-center"><code class="e2fa-secret"><%= secret %></code></p>
+    <p class="e2fa-muted e2fa-center">账户：<%= issuer %>:<%= username %></p>
+
+    <h2 style="margin-top:16px">③ 输入 App 显示的 6 位验证码确认绑定</h2>
+    <form method="post" action="<%= setupAction %>" autocomplete="off">
+      <input type="hidden" name="secret" value="<%= secret %>">
+      <div class="e2fa-field">
+        <label for="e2fa_code">验证码（30 秒刷新）</label>
+        <input id="e2fa_code" class="e2fa-code-input" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" required placeholder="000000" autofocus>
+      </div>
+      <div class="e2fa-actions"><button class="button" type="submit">确认绑定</button></div>
+    </form>
+    <% if (!enforceStrict) { %><a class="e2fa-backlink" href="/profile/security">取消</a><% } %>
+  </div>
+</section>
