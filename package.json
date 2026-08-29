@@ -1,8 +1,26 @@
 {
-  "name": "easy-2fa",
+  "name": "@evarentha/linearpress-easy-2fa",
   "version": "1.0.0",
-  "private": true,
-  "description": "LinearPress 两步验证插件：TOTP / 还原码 / WebAuthn 通行密钥，无外部依赖",
+  "private": false,
+  "description": "基于 TOTP 的两步验证（兼容 Google Authenticator 等验证器）：关闭/开启/严格开启三种模式，四词还原码单次使用，管理员可对单个用户强制关闭，可选 WebAuthn 通行密钥辅助登录。",
   "type": "module",
-  "main": "index.ts"
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "plugin.json",
+    "src",
+    "views",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "linearpress",
+    "plugin",
+    "easy-2fa"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
