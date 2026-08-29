@@ -53,13 +53,13 @@ Off by default（passkeys bypass codes and recovery）。Once enabled，users ca
 cd base && sh scripts/sync-plugins.sh easy-2fa
 
 # Option 2 — clone into runtime dir（目录名必须等于插件 id）
-git clone https://github.com/Averithen/linearpress-easy-2fa src/plugins/easy-2fa
+git clone https://github.com/Evarentha/linearpress-easy-2fa src/plugins/easy-2fa
 ```
 
 ## Local Development / 本地开发：怎么拉 / 怎么改 / 怎么跑
 
 ```bash
-git clone https://github.com/Averithen/linearpress-easy-2fa LinearPress/Plugins/easy-2fa
+git clone https://github.com/Evarentha/linearpress-easy-2fa LinearPress/Plugins/easy-2fa
 cd LinearPress/base
 npm install && npm run db:init
 sh scripts/sync-plugins.sh easy-2fa
