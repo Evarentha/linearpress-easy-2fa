@@ -1,17 +1,26 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Zero-Dependency QR Code Encoder
+ *
+ * Zero-dependency QR encoder rendering otpauth URIs as inline SVG.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * 无依赖 QR 码编码器（ISO/IEC 18004）：byte 模式、ECC 级别 M、版本 1-40 自适应、
- * 全掩码评估取最优，输出内联 SVG（crispEdges，含 4 模块静区）。
+ * Zero-dependency QR code encoder (ISO/IEC 18004): byte mode, ECC level M, adaptive versions
+ * 1-40, best mask chosen by full mask evaluation; outputs an inline SVG (crispEdges, with a
+ * 4-module quiet zone).
  *
- * 用于把 otpauth:// URI 渲染为验证器可扫描的二维码；实现遵循标准算法
- * （数据流 → 分块 Reed-Solomon 纠错 → 交织 → 功能图形 → 掩码罚分选优），
- * 与 easy-captcha 手写 PNG 编码同属「零依赖」策略。
+ * <p>Used to render the otpauth:// URI as a QR code that authenticators can scan; the
+ * implementation follows the standard algorithm (data stream → block-wise Reed-Solomon error
+ * correction → interleaving → function patterns → mask penalty scoring) and shares the
+ * "zero dependency" strategy with easy-captcha's hand-written PNG encoder.</p>
+ *
+ * @since 1.0.0
  */
 
 type EccLevel = 'L' | 'M' | 'Q' | 'H';

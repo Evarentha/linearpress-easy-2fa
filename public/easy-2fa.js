@@ -1,13 +1,24 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Easy 2FA Front-End Script
  *
- * 两步验证 - 前端脚本。
- *  1. 挑战页：TOTP / 还原码两种表单切换 + WebAuthn 通行密钥登录（不消耗还原码）。
- *  2. 账户安全页：添加通行密钥（navigator.credentials.create）。
- * 全部渐进增强：脚本不可用时 TOTP 与还原码流程不受影响。
+ * Progressive-enhancement script for the challenge and security pages.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Two-step verification - front-end script.
+ *  1. Challenge page: switching between the TOTP / recovery-code forms + WebAuthn passkey
+ *     login (does not consume recovery codes).
+ *  2. Account security page: adding passkeys (navigator.credentials.create).
+ * Everything is progressive enhancement: when scripts are unavailable, the TOTP and
+ * recovery-code flows are unaffected.
+ *
+ * @since 1.0.0
  */
 
 (() => {

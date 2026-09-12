@@ -1,16 +1,24 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * RFC 6238 TOTP Implementation
+ *
+ * TOTP and Base32 on node:crypto, aligned with mainstream authenticators.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * TOTP（RFC 6238）与 Base32（RFC 4648）实现，仅依赖 node:crypto。
+ * TOTP (RFC 6238) and Base32 (RFC 4648) implementation, depending only on node:crypto.
  *
- * 参数与主流验证器对齐：HMAC-SHA1、6 位数字、30 秒周期；校验窗口 ±window 个
- * 周期以容忍设备时钟偏差。密钥为随机 20 字节（160 位），Base32 无填充编码，
- * 生成的 otpauth:// URI 可被 Google/Microsoft Authenticator、1Password、Aegis 等直接扫描。
+ * <p>Parameters align with mainstream authenticators: HMAC-SHA1, 6 digits, 30-second periods;
+ * verification accepts ±window periods to tolerate device clock drift. Secrets are 20 random
+ * bytes (160 bits), Base32-encoded without padding, and the generated otpauth:// URI can be
+ * scanned directly by Google/Microsoft Authenticator, 1Password, Aegis and others.</p>
+ *
+ * @since 1.0.0
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';

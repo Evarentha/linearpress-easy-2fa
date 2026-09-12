@@ -1,8 +1,22 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Express-Session Type Augmentation
+ *
+ * Declares the Easy 2FA express-session fields.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/**
+ * Declares the express-session fields used by the two-step verification flow: the pending user
+ * ID and setup secret held while a challenge or binding is in progress, the passed-challenge
+ * flag consulted by the enforcement middleware, and the one-time WebAuthn register/login
+ * challenges and recovery-code reveal marker.
+ *
+ * @since 1.0.0
  */
 
 import 'express-session';

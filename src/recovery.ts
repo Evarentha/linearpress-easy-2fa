@@ -1,17 +1,29 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Recovery Code Generation and Consumption
+ *
+ * Generation and single-use consumption of four-word recovery codes.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * 还原码生成与消费。
+ * Recovery code generation and consumption.
  *
- * - 每个还原码由 4 个简单英文单词以 `-` 连接（如 morning-apple-bed-egg），
- *   便于口述与手抄；同一批 10 个码共占用 40 个词位，任何单词在全批中只出现一次。
- * - 词表共 64 个常见低级词汇，洗牌后取前 40 个；熵约 log2(64*63*...*25) ≈ 190 位。
- * - 存储只保留 SHA-256 哈希（与密码同等级对待），验证成功立即作废（单次使用）。
+ * <ul>
+ * <li>Each recovery code joins 4 simple English words with `-` (e.g. morning-apple-bed-egg),
+ * making it easy to read aloud and copy by hand; a batch of 10 codes occupies 40 word slots
+ * and no word appears more than once in the whole batch.</li>
+ * <li>The word list holds 83 common, basic words; it is shuffled and the first 40 are taken,
+ * for roughly log2(83*82*...*44) ≈ 240 bits of entropy.</li>
+ * <li>Storage keeps only SHA-256 hashes (treated with the same care as passwords); a
+ * successful verification invalidates the code immediately (single use).</li>
+ * </ul>
+ *
+ * @since 1.0.0
  */
 
 import { createHash, randomUUID, randomInt } from 'node:crypto';

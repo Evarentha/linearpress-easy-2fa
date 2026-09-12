@@ -1,14 +1,21 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Easy 2FA Data Access Layer
+ *
+ * Standard-SQL data access for secrets, recovery codes and passkeys.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * 数据访问层：只使用标准 SQL（SQLite / MySQL 双兼容），
- * 通过 databaseService 调用，跟随主业务库（MySQL 驱动生效时亦正确）。
- * 本模块不依赖 Base 内部实现。
+ * Data access layer: uses only standard SQL (compatible with both SQLite and MySQL), invoked
+ * through databaseService and following the main business database (still correct when the
+ * MySQL driver is active). This module does not depend on Base internals.
+ *
+ * @since 1.0.0
  */
 
 export interface Db {
@@ -64,7 +71,11 @@ export async function getTwoFactor(db: Db, userId: number): Promise<TwoFactorRow
 /** 创建未确认的绑定记录（严格模式进入绑定页时调用）；已存在则保留。 */
 export async function upsertPendingSecret(db: Db, userId: number, secret: string, now: number): Promise<void> {
   const existing = await getTwoFactor(db, userId);
-  if (existing) return void (await db.run('UPDATE easy2fa_users SET secret=? WHERE user_id=?', secret, userId));
+  if (existing) {
+    // 已启用的绑定不允许覆盖密钥：需先关闭两步验证再重新绑定，防止中途放弃绑定导致软锁。
+    if (existing.enabled) throw new Error('两步验证已启用，请先关闭后再重新绑定。');
+    return void (await db.run('UPDATE easy2fa_users SET secret=? WHERE user_id=?', secret, userId));
+  }
   await db.run('INSERT INTO easy2fa_users (user_id, secret, enabled, last_totp_step, created_at) VALUES (?, ?, 0, 0, ?)', userId, secret, now);
 }
 
@@ -103,8 +114,10 @@ export async function listRecoveryCodes(db: Db, userId: number): Promise<Recover
 export async function consumeRecoveryCode(db: Db, userId: number, codeHash: string, now: number): Promise<boolean> {
   const row = await db.get<RecoveryRow>('SELECT * FROM easy2fa_recovery_codes WHERE user_id=? AND code_hash=? AND used=0', userId, codeHash);
   if (!row) return false;
-  await db.run('UPDATE easy2fa_recovery_codes SET used=1, used_at=? WHERE id=?', now, row.id);
-  return true;
+  // 原子单次消费：条件 UPDATE 抢占作废权（WHERE used=0），回读 used_at 确认是本次写入——并发重放只有一个请求成功。
+  await db.run('UPDATE easy2fa_recovery_codes SET used=1, used_at=? WHERE id=? AND used=0', now, row.id);
+  const check = await db.get<{ used: number; used_at: number | null }>('SELECT used, used_at FROM easy2fa_recovery_codes WHERE id=?', row.id);
+  return Boolean(check && Number(check.used) === 1 && check.used_at !== null && Number(check.used_at) === now);
 }
 
 export async function countUnusedRecoveryCodes(db: Db, userId: number): Promise<number> {

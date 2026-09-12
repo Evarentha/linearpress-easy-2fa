@@ -1,28 +1,44 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Easy 2FA Plugin Entry
+ *
+ * Cordis-native plugin entry wiring login challenge, binding and admin flows.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * 两步验证插件入口（Cordis 原生插件，export default 即 activate 阶段）。
+ * Two-step verification plugin entry (Cordis-native plugin; the default export is the activate
+ * phase).
  *
- * 功能：
- *  1. TOTP 两步验证（RFC 6238）：兼容 Google/Microsoft Authenticator、1Password 等验证器，
- *     绑定页提供 otpauth:// 二维码（内置无依赖 QR 编码器）与密钥文本。
- *  2. 三种模式：off 关闭 / optional 开启（用户自选）/ strict 严格开启（全员强制，未绑定者
- *     密码校验通过后必须先完成绑定才能登录）。
- *  3. 还原码：绑定成功生成 10 个四词还原码（全批单词不重复），单次使用即作废。
- *  4. 管理端：拥有 easy-2fa:manage 权限的用户可对单个用户强制关闭两步验证
- *     （密钥、还原码、通行密钥一并删除）；严格模式下该用户下次登录需重新绑定。
- *  5. WebAuthn 通行密钥辅助登录（默认关闭）：忘记验证码时可用通行密钥代替，不消耗还原码。
+ * Features:
+ *  1. TOTP two-step verification (RFC 6238): compatible with Google/Microsoft Authenticator,
+ *     1Password and other authenticators; the binding page offers an otpauth:// QR code
+ *     (built-in zero-dependency QR encoder) plus the secret as text.
+ *  2. Three modes: off (disabled) / optional (enabled, user's choice) / strict (enforced for
+ *     everyone; users who have not bound a verifier must complete binding right after passing
+ *     the password check before they can log in).
+ *  3. Recovery codes: binding success generates 10 four-word recovery codes (no word repeats
+ *     within a batch); each code is invalidated after a single use.
+ *  4. Admin side: users holding the easy-2fa:manage permission can force-disable two-step
+ *     verification for an individual user (secret, recovery codes and passkeys are deleted
+ *     together); in strict mode that user must re-bind at the next login.
+ *  5. WebAuthn passkey-assisted login (off by default): a passkey can substitute for a
+ *     forgotten verification code without consuming a recovery code.
  *
- * 与 advanced-user-management 共存策略：
- *  - 覆盖 POST /login：密码校验成功且需要挑战时拦截进二次验证；否则 next() 交还
- *    后加载的处理器（限流/邮件验证等照常执行）；
- *  - 全局强制中间件兜底：若其他插件的登录处理器先完成了会话写入，而该用户需要两步
- *    验证但本会话尚未通过挑战，则后续所有请求都被重定向到挑战/绑定页。
+ * Coexistence strategy with advanced-user-management:
+ *  - Overrides POST /login: when the password check succeeds and a challenge is required, the
+ *    request is intercepted into second-factor verification; otherwise next() hands control back
+ *    to later-loaded handlers (rate limiting, email verification, etc. still run).
+ *  - A global enforcement middleware acts as the safety net: if another plugin's login handler
+ *    has already established the session while the user still needs two-step verification and
+ *    this session has not passed the challenge, all subsequent requests are redirected to the
+ *    challenge / binding page.
+ *
+ * @since 1.0.0
  */
 
 import { Context } from 'cordis';
@@ -386,6 +402,12 @@ export default async function easy2fa(context: Context): Promise<void> {
     if (!result.ok) return renderSetup(req, res, !session.userId).then(() => undefined);
 
     const now = Date.now();
+    if ((await rowFor(uid))?.enabled === 1) {
+      // 并发确认/已启用的兜底：不覆盖既有密钥，按已启用状态分流。
+      delete session.easy2faPendingUserId;
+      session.easy2faPassed = true;
+      return res.redirect(session.userId ? `${SECURITY_URL}?notice=enabled` : '/login');
+    }
     await upsertPendingSecret(db, uid, secret, now);
     await confirmBinding(db, uid, now);
     const codes = generateRecoveryCodes();

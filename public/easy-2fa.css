@@ -1,11 +1,21 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Easy 2FA Stylesheet
  *
- * 两步验证 - 样式。采用与 advanced-user-management 相同的卡片/徽章设计语言；
- * 同时注入前台与后台，类名统一使用 e2fa- 前缀避免冲突。
+ * Styles for the Easy 2FA front-end and admin pages.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * Two-step verification - styles. Follows the same card/badge design language as
+ * advanced-user-management; injected into both the front end and the admin panel, with all
+ * class names prefixed e2fa- to avoid conflicts.
+ *
+ * @since 1.0.0
  */
 
 :root{--e2fa-accent:#2563eb;--e2fa-danger:#dc2626;--e2fa-warn:#d97706;--e2fa-ok:#16a34a;--e2fa-border:#e4e4e7;--e2fa-text:#18181b;--e2fa-muted:#71717a}

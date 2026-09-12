@@ -1,23 +1,37 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * WebAuthn Server-Side Verification
+ *
+ * WebAuthn passkey registration and assertion verification.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * WebAuthn（通行密钥）服务端验证，仅依赖 node:crypto + 内置 CBOR 解码器。
+ * WebAuthn (passkey) server-side verification, depending only on node:crypto plus the
+ * built-in CBOR decoder.
  *
- * 支持范围与主流平台认证器对齐：
- * - 算法：ES256（EC2/P-256，alg -7）为主；RS256（RSA，alg -257）为辅。
- * - 证明格式：'none'（多数平台同步器密钥）与 'packed'（自证/证书链均接受签名结构，
- *   本插件不校验 attestation 证书链——注册信任基于 origin/rpId/challenge 校验）。
- * - 断言校验：challenge / origin / rpIdHash / UP 用户在场 / signCount 计数器防克隆。
+ * <p>Supported coverage aligns with mainstream platform authenticators:</p>
+ * <ul>
+ * <li>Algorithms: ES256 (EC2/P-256, alg -7) as primary; RS256 (RSA, alg -257) as fallback.</li>
+ * <li>Attestation formats: 'none' (most platform-synced keys) and 'packed' — the attestation
+ * signature is verified (leaf attestation certificate via x5c, or self-attestation with the
+ * credential key). Trust-path policy (chaining the certificate to a configured root) remains
+ * out of scope because registration requests attestation: 'none'; registration trust is
+ * otherwise based on origin/rpId/challenge checks.</li>
+ * <li>Assertion checks: challenge / origin / rpIdHash / UP user presence / signCount
+ * clone-resistance counter.</li>
+ * </ul>
  *
- * 注意：WebAuthn 要求安全上下文（HTTPS 或 localhost）。
+ * <p>Note: WebAuthn requires a secure context (HTTPS or localhost).</p>
+ *
+ * @since 1.0.0
  */
 
-import { createHash, createPublicKey, randomBytes, verify as cryptoVerify, type KeyObject } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, verify as cryptoVerify, X509Certificate, type KeyObject } from 'node:crypto';
 import { CborDecoder, cborDecode } from './cbor.js';
 
 /* ------------------------------------------------------------ Base64URL 工具 */
@@ -145,8 +159,45 @@ export interface VerifiedRegistration {
 }
 
 /**
+ * packed 证明 alg → 验签哈希与公钥类型（ES256/ES384/ES512 与 RS256/RS384/RS512）。
+ */
+const PACKED_ALG: Record<number, { hash: string; keyType: 'ec' | 'rsa' }> = {
+  [-7]: { hash: 'sha256', keyType: 'ec' }, [-35]: { hash: 'sha384', keyType: 'ec' }, [-36]: { hash: 'sha512', keyType: 'ec' },
+  [-257]: { hash: 'sha256', keyType: 'rsa' }, [-258]: { hash: 'sha384', keyType: 'rsa' }, [-259]: { hash: 'sha512', keyType: 'rsa' }
+};
+
+/**
+ * 校验 packed 证明签名（W3C WebAuthn Level 1 §8.2）：
+ * - 含 x5c：叶子证明证书不得为 CA，且其公钥必须能验签（签名覆盖 authenticatorData ‖ SHA-256(clientDataJSON)）；
+ * - 无 x5c（自证明）：attStmt.alg 必须与凭证公钥 alg 一致，签名用凭证公钥校验。
+ * 证书链到信任根的策略不在本插件范围（注册请求 attestation: 'none'）。
+ */
+function verifyPackedAttestation(attStmt: Map<unknown, unknown>, authDataBuffer: Buffer, clientDataHash: Buffer, credentialKey: KeyObject, coseAlg: unknown): void {
+  const alg = attStmt.get('alg');
+  const sig = attStmt.get('sig');
+  const x5c = attStmt.get('x5c');
+  if (typeof alg !== 'number') throw new Error('packed 证明缺少 alg。');
+  const algSpec = PACKED_ALG[alg];
+  if (!algSpec) throw new Error(`packed 证明算法不支持：${alg}（支持 ES256/ES384/ES512 与 RS256/RS384/RS512）。`);
+  const { hash, keyType } = algSpec;
+  if (!(sig instanceof Buffer) || !sig.length) throw new Error('packed 证明缺少签名。');
+  const signed = Buffer.concat([authDataBuffer, clientDataHash]);
+  if (Array.isArray(x5c) && x5c.length > 0) {
+    if (!x5c.every((cert) => cert instanceof Buffer) || !(x5c[0] instanceof Buffer)) throw new Error('packed 证明 x5c 证书格式不合法。');
+    let leaf: X509Certificate;
+    try { leaf = new X509Certificate(x5c[0]); } catch { throw new Error('packed 证明叶子证书解析失败。'); }
+    if (leaf.ca) throw new Error('packed 证明叶子证书不应是 CA。');
+    if (leaf.publicKey.asymmetricKeyType !== keyType) throw new Error('packed 证明 alg 与证明证书公钥类型不一致。');
+    if (!cryptoVerify(hash, signed, leaf.publicKey, sig)) throw new Error('packed 证明签名校验失败（证明证书公钥）。');
+    return;
+  }
+  if (alg !== coseAlg) throw new Error('packed 自证明 alg 与凭证公钥算法不一致。');
+  if (!cryptoVerify(hash, signed, credentialKey, sig)) throw new Error('packed 自证明签名校验失败。');
+}
+
+/**
  * 校验注册响应并提取凭证。信任建立依据：challenge 一次性、origin 匹配、rpIdHash 匹配、
- * UP 已置位；证明格式支持 none / packed（不校验 attestation 证书链，见模块注释）。
+ * UP 已置位；证明格式支持 none / packed（packed 验证证明签名，见 verifyPackedAttestation）。
  */
 export function verifyRegistration(response: RegistrationResponse, expectedChallenge: string, origin: string, rpId: string): VerifiedRegistration {
   parseClientData(response.clientDataJSON, 'webauthn.create', expectedChallenge, origin);
@@ -158,15 +209,19 @@ export function verifyRegistration(response: RegistrationResponse, expectedChall
   if (!(authDataBuffer instanceof Buffer)) throw new Error('attestationObject 缺少 authData。');
 
   if (fmt !== 'none' && fmt !== 'packed') throw new Error(`不支持的证明格式：${fmt}。`);
-  // packed 格式要求存在 attStmt（此处不校验其证书链/签名，仅要求字段齐全）。
-  if (fmt === 'packed' && !(attestationObject.get('attStmt') instanceof Map)) throw new Error('packed 证明缺少 attStmt。');
 
   const authData = parseAuthData(authDataBuffer);
   checkRpIdHash(authData, rpId);
   if (!(authData.flags & 0x01)) throw new Error('认证器未确认用户在场（UP）。');
   if (!(authData.flags & 0x40) || !authData.credentialId || !authData.coseKey) throw new Error('注册响应未包含新凭证。');
 
-  coseToPublicKey(authData.coseKey); // 提前验证可转换，避免存入不可用公钥
+  const credentialKey = coseToPublicKey(authData.coseKey); // 提前验证可转换，避免存入不可用公钥
+  if (fmt === 'packed') {
+    const attStmt = attestationObject.get('attStmt');
+    if (!(attStmt instanceof Map)) throw new Error('packed 证明缺少 attStmt。');
+    const clientDataHash = createHash('sha256').update(Buffer.from(response.clientDataJSON, 'utf8')).digest();
+    verifyPackedAttestation(attStmt, authDataBuffer, clientDataHash, credentialKey, authData.coseKey.get(COSE_ALG));
+  }
 
   return {
     credentialId: toBase64Url(authData.credentialId),

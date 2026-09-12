@@ -1,13 +1,21 @@
 /*
- * Author: MoyuZJ
- * Team: LinearTeam
- * Contact: linearteam@foxmail.com
- * Made by MoyuZJ in China with ♥
+ * Minimal CBOR Decoder
+ *
+ * Minimal RFC 8949 subset decoder for WebAuthn attestation objects.
+ *
+ * Authors:
+ * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ *
+ * Copyright (C) 2026 Evarentha
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * 最小 CBOR 解码器（RFC 8949 子集），仅覆盖 WebAuthn attestationObject 所需类型：
- * 无/负整数、字节串、文本串、数组、映射、标签跳过与常用简单值。不支持的类型抛错。
+ * Minimal CBOR decoder (RFC 8949 subset), covering only the types required by WebAuthn
+ * attestationObject: unsigned/negative integers, byte strings, text strings, arrays, maps,
+ * tag skipping and common simple values. Unsupported types throw an error.
+ *
+ * @since 1.0.0
  */
 
 export class CborDecoder {
