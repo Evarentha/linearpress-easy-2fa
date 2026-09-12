@@ -1,90 +1,51 @@
-<!--
-  Author: MoyuZJ
-  Team: LinearTeam
-  Contact: linearteam@foxmail.com
-  Made by MoyuZJ in China with ♥
--->
+# Easy 2FA
 
-# 两步验证（easy-2fa）
+[![LinearPress](https://img.shields.io/badge/LinearPress-plugin-7C3AED.svg)](https://www.npmjs.com/package/@evarentha/linearpress) [![npm](https://img.shields.io/npm/v/@evarentha/linearpress-easy-2fa.svg)](https://www.npmjs.com/package/@evarentha/linearpress-easy-2fa) [![Node.js](https://img.shields.io/badge/node-%3E%3D22-green.svg)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org) [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-基于 **TOTP（RFC 6238）** 的两步验证插件，密钥与 `otpauth://` URI 完全遵循标准，
-兼容 Google Authenticator、Microsoft Authenticator、1Password、Aegis、Authy 等主流验证器；
-**全插件零外部依赖**（QR 编码器、Base32、CBOR 解码、WebAuthn 验签均为内置实现）。
+**English** | [简体中文](README.zh-CN.md)
 
-> 本仓库是 LinearPress 插件 **easy-2fa** 的独立开发仓库。插件即 Cordis 插件函数，即插即用、可停用可卸载。
+A second factor for LinearPress logins using TOTP, working with every mainstream authenticator app, backed by 10 single-use recovery codes, with optional WebAuthn passkeys and zero external dependencies. Strict mode pushes every account through binding at its next login; enable it when you are ready for that.
 
-## 插件化的优势
-
-- **登录流程接管不碰核心**：在认证成功后插入两因素挑战，核心 `auth` 服务与登录视图的渲染由插件接管，卸载即回到纯密码登录。
-- **合规内置**：无依赖实现 TOTP/QR/WebAuthn，安装即用，不引第三方运行时依赖。
-- **可独立分发**：任何 LinearPress 站点 ZIP/npm 安装即可获得两步验证能力。
-
-## 验证模式（插件设置）
-
-| 模式 | 行为 |
-| --- | --- |
-| **关闭** | 不启用两步验证，所有用户直接登录。 |
-| **开启** | 用户可在「个人资料 → 账户安全」选择性启用；启用的用户登录需通过两步验证。 |
-| **严格开启** | 所有用户必须使用两步验证；未启用的用户密码校验成功后会被引导至绑定页，扫码确认后才能完成登录。 |
-
-## 还原码
-
-- 启用/重新绑定时生成 **10 个还原码**，每个由 4 个简单英文单词以 `-` 连接（如 `morning-apple-bed-egg`），**同一批中任何单词都不重复**。
-- 还原码仅在挑战页展示一次；每个码**仅限使用一次**，验证成功立即作废；10 个用尽后需管理员关闭该用户的两步验证后重新绑定。
-
-## 管理员操作
-
-拥有 `easy-2fa:manage` 权限的用户可在后台「两步验证」页：查看全部用户启用状态/剩余还原码/已绑定通行密钥数；对单个用户**强制关闭两步验证**（删除密钥、作废还原码、移除通行密钥）。
-
-## WebAuthn 通行密钥（可选，默认关闭）
-
-默认关闭（通行密钥可代替验证码与还原码，会降低安全性）。启用后用户可在「账户安全」页添加平台通行密钥（Touch ID / Windows Hello / USB 安全钥匙等），挑战时可直接通过，**不消耗还原码**。
-
-> WebAuthn 要求安全上下文：生产需 HTTPS，本机开发可用 localhost。
-
-## 安装
+## Install
 
 ```bash
-# 方式一：工作区同步
-cd base && sh scripts/sync-plugins.sh easy-2fa
-
-# 方式二：克隆到运行目录（目录名必须等于插件 id）
-git clone <本仓库地址> src/plugins/easy-2fa
+git clone https://github.com/Evarentha/linearpress-easy-2fa.git src/plugins/easy-2fa
 ```
 
-启用后进入后台「两步验证」设置页选择模式并保存（即时生效，无需重启）。
+The directory name must equal the plugin id. Restart afterwards, or sync from the `base` checkout (`sh scripts/sync-plugins.sh easy-2fa`), or upload the ZIP / npm name from the admin Plugins page. Users need any RFC 6238 authenticator app. WebAuthn requires a secure context: HTTPS in production, localhost for local development.
 
-## 本地开发：怎么拉 / 怎么改 / 怎么跑
+## How login changes
 
-```bash
-git clone <本仓库地址> LinearPress/Plugins/easy-2fa
-cd LinearPress/base
-npm install && npm run db:init
-sh scripts/sync-plugins.sh easy-2fa
-npm run dev
-```
+The plugin overrides `POST /login`. After a successful password check it parks a pending session (no login yet) and redirects to the challenge page, or to the binding page for an account that has no second factor yet. When no challenge is required the request passes through untouched, which is why the login rate limiting of advanced-user-management keeps working alongside. A global enforcement middleware acts as the safety net: any session that logged in without completing the challenge gets redirected back, and completing the challenge regenerates the session id.
 
-## 目录结构
+Ten failed challenge attempts within 5 minutes lock that subject out of further attempts.
 
-```text
-easy-2fa/
-├── plugin.json            # Manifest
-├── index.ts               # 入口：登录接管 + 强制中间件 + 路由注册
-├── src/
-│   ├── config.ts          # 配置模型（模式 / WebAuthn 开关 / 签发方名称）
-│   ├── store.ts           # 数据访问层（跨方言 SQL）
-│   ├── totp.ts            # Base32 + RFC 6238 TOTP 校验 + otpauth URI
-│   ├── recovery.ts        # 还原码词表 / 生成 / 消费
-│   ├── qr.ts              # 无依赖 QR 编码器（byte 模式，输出 SVG）
-│   ├── cbor.ts            # 最小 CBOR 解码器（WebAuthn 用）
-│   └── webauthn.ts        # COSE 公钥解析 + attestation/assertion 校验
-├── views/                 # 后台管理/设置页 + 挑战页/绑定页/账户安全页
-├── public/                # 前端 CSS 与 JS（WebAuthn 浏览器端）
-└── types/session.d.ts     # 会话字段声明
-```
+## Recovery codes
 
-## 贡献与发布
+Binding (or rebinding) generates 10 single-use codes, each 4 common English words joined by hyphens, like `morning-apple-bed-egg`. No word repeats within a batch; the ten codes are drawn from a shuffled 83-word list, which is where the roughly 240 bits of entropy across the batch come from, and only SHA-256 hashes are stored, with input normalized before checking. Codes are shown exactly once. When all 10 are spent, an admin force-disables 2FA for that user so they can bind again.
 
-- conventional commits；提交前 `cd base && npm run typecheck`
-- 版本：`git tag v1.0.0 && git push --tags`
-- License：MIT（见仓库 LICENSE）
+## Passkeys
+
+WebAuthn is optional and off by default. A passkey satisfies the login challenge without consuming a recovery code. Credentials may be ES256 or RS256. Verification covers challenge, origin, RP-ID hash, user presence, user verification, the sign-count clone check, and the signature. At registration, packed attestation signatures are verified: with an x5c chain the leaf certificate must parse, must not be a CA, its key type must match the declared algorithm, and the signature must verify against the leaf public key; with self-attestation the declared algorithm must match the credential key and the signature must verify with it. Chaining the attestation certificate to a trusted root stays out of scope, since registration requests attestation "none".
+
+Base32, TOTP, the byte-mode QR encoder that emits the binding page's SVG, and the CBOR decoder are all implemented inside the plugin. Nothing else gets pulled in at install time.
+
+## Admin
+
+Settings live at `/admin/easy-2fa`: mode (off / optional / strict), the issuer name shown inside authenticator apps, the TOTP window (0 to 5 periods, up to ±150 seconds, for device clock drift), and the WebAuthn toggle. Users manage their own second factor at `/profile/security`: enable, disable, regenerate recovery codes, add or remove passkeys. Login challenges and first-time binding run under `/login/2fa/*`.
+
+`easy-2fa:manage` opens the admin pages: a per-user overview (who has 2FA on, how many recovery codes remain, how many passkeys are bound) and force-disable per user, which deletes the secret, voids the recovery codes, and removes the passkeys.
+
+Three tables, in dialect-neutral SQL so they follow whichever database driver the site runs: `easy2fa_users` (secret, enabled state, the anti-replay step anchor), `easy2fa_recovery_codes` (hashes with single-use flags), `easy2fa_passkeys` (COSE public keys and signature counters). Uninstalling returns the site to plain password login.
+
+## FAQ
+
+**Forgot the authenticator and spent all ten recovery codes.** An admin opens `/admin/easy-2fa` and force-disables 2FA for that user; this deletes the secret, voids the recovery codes, and removes the passkeys, so the user can bind again at the next login.
+
+**Passkeys keep failing.** WebAuthn requires a secure context: HTTPS in production, localhost for local development. Also check that the site is served from the exact origin used at registration; origin and RP-ID are both verified on every assertion.
+
+**Does it conflict with advanced-user-management?** No. When no challenge is required, the login request passes through untouched, so AUM's rate limiting keeps working; when one is required, the pending session is parked before AUM sees a login.
+
+## License
+
+GPL-3.0-or-later, Copyright (C) 2026 Evarentha. See LICENSE.
