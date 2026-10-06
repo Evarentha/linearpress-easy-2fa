@@ -1,3 +1,7 @@
+# Local documentation (kept on disk, not committed)
+doc/
+docs/
+
 node_modules/
 .logs/
 *.log
