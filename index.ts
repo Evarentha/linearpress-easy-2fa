@@ -5,6 +5,7 @@
  *
  * Authors:
  * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@gmail.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -55,6 +56,7 @@ import {
 import { buildOtpauthUri, generateSecret, verifyTotp } from './src/totp.js';
 import { generateRecoveryCodes, hashRecoveryCode, RECOVERY_CODE_COUNT } from './src/recovery.js';
 import { renderQrSvg } from './src/qr.js';
+import { completeLogin } from './src/session.js';
 import {
   buildCreationOptions, buildRequestOptions, generateChallenge,
   verifyAssertion, verifyRegistration
@@ -140,17 +142,6 @@ export default async function easy2fa(context: Context): Promise<void> {
   /** 当前挑战/绑定的目标用户：优先 pending（密码已过、会话未发），其次已登录用户。 */
   function subjectOf(session: SessionLike): number {
     return session.easy2faPendingUserId ?? session.userId ?? 0;
-  }
-
-  /** 挑战完成：重建会话并写入正式登录态（防 Session Fixation）。 */
-  function completeLogin(req: Request, userId: number): Promise<void> {
-    return new Promise((resolve) => {
-      req.session.regenerate(() => {
-        req.session.userId = userId;
-        req.session.easy2faPassed = true;
-        resolve();
-      });
-    });
   }
 
   async function passkeyReadyFor(userId: number): Promise<boolean> {

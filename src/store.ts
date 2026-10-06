@@ -5,6 +5,7 @@
  *
  * Authors:
  * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@gmail.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -114,10 +115,10 @@ export async function listRecoveryCodes(db: Db, userId: number): Promise<Recover
 export async function consumeRecoveryCode(db: Db, userId: number, codeHash: string, now: number): Promise<boolean> {
   const row = await db.get<RecoveryRow>('SELECT * FROM easy2fa_recovery_codes WHERE user_id=? AND code_hash=? AND used=0', userId, codeHash);
   if (!row) return false;
-  // 原子单次消费：条件 UPDATE 抢占作废权（WHERE used=0），回读 used_at 确认是本次写入——并发重放只有一个请求成功。
-  await db.run('UPDATE easy2fa_recovery_codes SET used=1, used_at=? WHERE id=? AND used=0', now, row.id);
-  const check = await db.get<{ used: number; used_at: number | null }>('SELECT used, used_at FROM easy2fa_recovery_codes WHERE id=?', row.id);
-  return Boolean(check && Number(check.used) === 1 && check.used_at !== null && Number(check.used_at) === now);
+  // The conditional UPDATE's affected-row count identifies the winner; timestamps are not unique ownership tokens.
+  const result = await db.run('UPDATE easy2fa_recovery_codes SET used=1, used_at=? WHERE id=? AND used=0', now, row.id) as { changes?: number | bigint };
+  if (!result || result.changes === undefined) throw new Error('数据库驱动未返回恢复码消费结果');
+  return Number(result.changes) === 1;
 }
 
 export async function countUnusedRecoveryCodes(db: Db, userId: number): Promise<number> {
