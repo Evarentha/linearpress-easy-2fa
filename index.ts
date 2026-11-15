@@ -192,7 +192,18 @@ export default async function easy2fa(ctx: Context): Promise<void> {
   }));
 
   /* ---------- the user's own page ---------- */
-  ui.menu('user.menu', { title: '两步验证', href: ACCOUNT, order: 81, when: () => config.mode !== 'off' });
+  // Reached from the account page card below (the user menu links to /account).
+  ui.slot('account.sections', {
+    order: 20,
+    match: (req) => req.path === '/account' && config.mode !== 'off',
+    prepare: async (req) => (req.session.userId ? { enabled: await enabledFor(req.session.userId), required: config.mode === 'strict' } : null),
+    render: ({ data }) => {
+      const state = data as { enabled: boolean; required: boolean } | null;
+      if (!state) return '';
+      const badge = state.enabled ? '<span class="badge badge-published">已开启</span>' : `<span class="badge${state.required ? ' badge-warning' : ''}">${state.required ? '需要开启' : '未开启'}</span>`;
+      return `<section class="card stack" data-lp-plugin="easy-2fa" aria-labelledby="e2fa-account-card"><div class="card-header"><div><h2 class="section-title" id="e2fa-account-card">两步验证</h2><p>登录时除了密码，还要输入验证器应用里的动态码。</p></div>${badge}</div><div><a class="btn" href="${ACCOUNT}">${state.enabled ? '管理两步验证' : '开启两步验证'}</a></div></section>`;
+    }
+  });
   const renderAccount = async (req: Request, res: Response, extra: Record<string, unknown> = {}, status = 200) => {
     const user = (await ctx.users.findById(req.session.userId!))!;
     const enabled = await enabledFor(user.id);
