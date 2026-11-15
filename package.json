@@ -1,8 +1,8 @@
 {
   "name": "@evarentha/linearpress-easy-2fa",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "license": "GPL-3.0-or-later",
-  "description": "基于 TOTP 的两步验证（兼容 Google Authenticator 等验证器）：关闭/开启/严格开启三种模式，四词还原码单次使用，管理员可对单个用户强制关闭，可选 WebAuthn 通行密钥辅助登录。",
+  "description": "登录时除密码外再输入手机验证器（TOTP）上的验证码；可选、强制两种模式，一次性还原码，可选通行密钥。对所有登录方式生效，包括单点登录。",
   "type": "module",
   "main": "index.ts",
   "author": "MoyuZJ <moyuzj@evarentha.com> (https://moyuzj.cn)",
@@ -20,7 +20,7 @@
     "node": ">=22.0.0"
   },
   "peerDependencies": {
-    "linearpress": "^3.0.0"
+    "linearpress": "^4.0.0"
   },
   "publishConfig": {
     "access": "public"
