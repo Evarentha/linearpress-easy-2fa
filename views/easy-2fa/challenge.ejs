@@ -1,0 +1,41 @@
+<%#
+  Two-factor · sign-in challenge (auth layout): authenticator code, recovery code or passkey.
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><section class="auth-panel" data-lp-plugin="easy-2fa" aria-labelledby="e2fa-title">
+  <h1 id="e2fa-title">两步验证</h1>
+  <p class="sub">正在登录 <strong><%= user.username %></strong></p>
+  <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" role="alert"><div class="alert-body"><p><%= error %></p></div></div><% } %>
+
+  <form class="form" method="post" action="/login/2fa" data-e2fa-panel="totp"<%- method === 'totp' ? '' : ' hidden' %>>
+    <input type="hidden" name="method" value="totp">
+    <div class="field">
+      <label for="e2fa-code">验证器上的 6 位数字</label>
+      <input class="input e2fa-code" id="e2fa-code" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" required autofocus>
+      <p class="help">打开 Google Authenticator、Microsoft Authenticator 等验证器查看。</p>
+    </div>
+    <button class="btn btn-primary btn-lg btn-block" type="submit">验证并登录</button>
+  </form>
+
+  <form class="form" method="post" action="/login/2fa" data-e2fa-panel="recovery"<%- method === 'recovery' ? '' : ' hidden' %>>
+    <input type="hidden" name="method" value="recovery">
+    <div class="field">
+      <label for="e2fa-recovery">还原码</label>
+      <input class="input" id="e2fa-recovery" name="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="四个英文单词，用空格或短横线分隔" required>
+      <p class="help">每个还原码只能用一次，还剩 <%= recovery %> 个。</p>
+    </div>
+    <button class="btn btn-primary btn-lg btn-block" type="submit">用还原码登录</button>
+  </form>
+
+  <div class="e2fa-alt">
+    <button type="button" class="btn-link" data-e2fa-switch="recovery"<%- method === 'recovery' ? ' hidden' : '' %>>手机不在身边？使用还原码</button>
+    <button type="button" class="btn-link" data-e2fa-switch="totp"<%- method === 'totp' ? ' hidden' : '' %>>改用验证器</button>
+    <% if (passkeys) { %><button type="button" class="btn btn-block" data-e2fa-passkey-login data-options-url="/login/2fa/passkey/options" data-verify-url="/login/2fa/passkey">使用通行密钥</button><% } %>
+  </div>
+  <form method="post" action="/login/2fa/cancel"><button class="btn btn-ghost btn-block" type="submit">取消登录</button></form>
+</section>

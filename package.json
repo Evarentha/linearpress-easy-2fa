@@ -5,7 +5,7 @@
   "description": "基于 TOTP 的两步验证（兼容 Google Authenticator 等验证器）：关闭/开启/严格开启三种模式，四词还原码单次使用，管理员可对单个用户强制关闭，可选 WebAuthn 通行密钥辅助登录。",
   "type": "module",
   "main": "index.ts",
-  "author": "MoyuZJ <moyuzj@moyuzj.cn> (https://moyuzj.cn)",
+  "author": "MoyuZJ <moyuzj@evarentha.com> (https://moyuzj.cn)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Evarentha/linearpress-easy-2fa.git"

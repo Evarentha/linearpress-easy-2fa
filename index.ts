@@ -1,629 +1,302 @@
 /*
- * Easy 2FA Plugin Entry
+ * Two-Factor Sign-In Plugin Entry Point
  *
- * Cordis-native plugin entry wiring login challenge, binding and admin flows.
+ * TOTP two-step verification as a core sign-in challenge, with recovery codes and optional passkeys.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 /**
- * Two-step verification plugin entry (Cordis-native plugin; the default export is the activate
- * phase).
- *
- * Features:
- *  1. TOTP two-step verification (RFC 6238): compatible with Google/Microsoft Authenticator,
- *     1Password and other authenticators; the binding page offers an otpauth:// QR code
- *     (built-in zero-dependency QR encoder) plus the secret as text.
- *  2. Three modes: off (disabled) / optional (enabled, user's choice) / strict (enforced for
- *     everyone; users who have not bound a verifier must complete binding right after passing
- *     the password check before they can log in).
- *  3. Recovery codes: binding success generates 10 four-word recovery codes (no word repeats
- *     within a batch); each code is invalidated after a single use.
- *  4. Admin side: users holding the easy-2fa:manage permission can force-disable two-step
- *     verification for an individual user (secret, recovery codes and passkeys are deleted
- *     together); in strict mode that user must re-bind at the next login.
- *  5. WebAuthn passkey-assisted login (off by default): a passkey can substitute for a
- *     forgotten verification code without consuming a recovery code.
- *
- * Coexistence strategy with advanced-user-management:
- *  - Overrides POST /login: when the password check succeeds and a challenge is required, the
- *    request is intercepted into second-factor verification; otherwise next() hands control back
- *    to later-loaded handlers (rate limiting, email verification, etc. still run).
- *  - A global enforcement middleware acts as the safety net: if another plugin's login handler
- *    has already established the session while the user still needs two-step verification and
- *    this session has not passed the challenge, all subsequent requests are redirected to the
- *    challenge / binding page.
+ * <p>Registered as a challenge in the core auth flow, so it runs after every
+ * other check for every sign-in method (password, SSO, ...) and no session
+ * exists until it is passed. 3.x replaced POST /login and patrolled every
+ * request with a middleware instead, which other login handlers could
+ * bypass.</p>
+ * <p>Modes: off, optional (users opt in on their security page) and strict
+ * (everyone must set it up during their next sign-in).</p>
  *
  * @since 1.0.0
  */
 
-import { Context } from 'cordis';
-import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import type { Easy2faConfig } from './src/config.js';
-import { loadConfig, normalizeConfig, parseSettingsForm, saveConfig } from './src/config.js';
-import type { Db } from './src/store.js';
+import type { Context } from 'cordis';
+import type { Request, Response } from 'express';
+import { checkPermission, requireAuth, route, text, parseId, messageOf } from 'linearpress/plugin-api';
+import { normalizeConfig, parseSettingsForm, type Easy2faConfig } from './src/config.js';
+import { renderQrSvg } from './src/qr.js';
+import { generateRecoveryCodes, hashRecoveryCode, RECOVERY_CODE_COUNT } from './src/recovery.js';
 import {
-  ensureSchema, getTwoFactor, upsertPendingSecret, confirmBinding, updateLastStep, removeTwoFactor,
-  replaceRecoveryCodes, consumeRecoveryCode, countUnusedRecoveryCodes,
-  addPasskey, listPasskeys, getPasskey, updatePasskeySignCount, deletePasskey,
-  type PasskeyRow
+  addPasskey, confirmBinding, consumeRecoveryCode, countUnusedRecoveryCodes, deletePasskey, ensureSchema, getPasskey, getTwoFactor,
+  listPasskeys, removeTwoFactor, replaceRecoveryCodes, statusByUser, updateLastStep, updatePasskeySignCount, upsertPendingSecret
 } from './src/store.js';
 import { buildOtpauthUri, generateSecret, verifyTotp } from './src/totp.js';
-import { generateRecoveryCodes, hashRecoveryCode, RECOVERY_CODE_COUNT } from './src/recovery.js';
-import { renderQrSvg } from './src/qr.js';
-import { completeLogin } from './src/session.js';
-import {
-  buildCreationOptions, buildRequestOptions, generateChallenge,
-  verifyAssertion, verifyRegistration
-} from './src/webauthn.js';
-import { requireAuth, checkPermission } from '../../services/permission.service.js';
+import { buildCreationOptions, buildRequestOptions, generateChallenge, verifyAssertion, verifyRegistration } from './src/webauthn.js';
 
 const PLUGIN_ID = 'easy-2fa';
-const CHALLENGE_URL = '/login/2fa';
-const SETUP_URL = `${CHALLENGE_URL}/setup`;
-const ADMIN_ROOT = '/admin/easy-2fa';
-const SETTINGS_URL = `${ADMIN_ROOT}/settings`;
-const SECURITY_URL = '/profile/security';
-const MANAGE_PERMISSION = 'easy-2fa:manage';
+const CHALLENGE = '/login/2fa';
+const ACCOUNT = '/account/two-factor';
+const ADMIN = '/admin/two-factor';
+const AUTH_LAYOUT = 'layouts/auth';
+const WINDOW = 5 * 60_000;
+const MAX_FAILURES = 8;
 
-/** 挑战尝试限制：同一主体 5 分钟窗口内最多 10 次失败（进程内滑动窗口）。 */
-const ATTEMPT_WINDOW_MS = 5 * 60 * 1000;
-const ATTEMPT_MAX_FAILURES = 10;
-
-const text = (value: unknown): string => String(value ?? '').trim();
-const param = (value: unknown): string => Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '');
-const asId = (value: unknown): number => Number(value) || 0;
-const messageOf = (error: unknown): string => error instanceof Error ? error.message : '操作失败';
-/** 页面处理器包装：失败时渲染 error 视图（与 Base wrap 语义一致）。 */
-const wrap = (fn: (req: Request, res: Response) => Promise<unknown> | unknown): RequestHandler => (req, res, next) => {
-  void Promise.resolve(fn(req, res)).catch((error) => {
-    console.error(`[${PLUGIN_ID}] handler error:`, error);
-    if (!res.headersSent) res.status(500).render('error', { title: '服务器错误', message: messageOf(error) });
-    else next(error);
-  });
-};
-/** JSON API 处理器包装：失败时返回 { ok:false }。 */
-const wrapJson = (fn: (req: Request, res: Response) => Promise<unknown> | unknown): RequestHandler => (req, res) => {
-  void Promise.resolve(fn(req, res)).catch((error) => {
-    console.error(`[${PLUGIN_ID}] handler error:`, error);
-    if (!res.headersSent) res.status(400).json({ ok: false, message: messageOf(error) });
-  });
-};
-
-interface SessionLike {
-  userId?: number;
-  easy2faPendingUserId?: number;
-  easy2faPassed?: boolean;
-  easy2faSetupSecret?: string;
-  easy2faWebauthnRegisterChallenge?: string;
-  easy2faWebauthnLoginChallenge?: string;
+declare module 'express-session' {
+  interface SessionData {
+    e2faSetup?: { userId: number; secret: string };
+    e2faCodes?: { userId: number; codes: string[]; then: 'continue' | 'account' };
+    e2faPassed?: number;
+    e2faWebauthn?: string;
+  }
 }
 
-export default async function easy2fa(context: Context): Promise<void> {
-  const { web, admin } = context.linearpress;
-  const hooks = context.hooks;
-  const plugins = context.plugins;
-  const auth = context.auth;
-  const users = context.users;
-  const db = context.databaseService as unknown as Db;
+export default async function easy2fa(ctx: Context): Promise<void> {
+  const { web, ui, admin, auth } = ctx.linearpress;
+  const db = () => ctx.databaseService;
+  await ensureSchema(db());
+  let config: Easy2faConfig = normalizeConfig(await ctx.plugins.getConfig(PLUGIN_ID));
+  const enabledFor = async (userId: number) => (await getTwoFactor(db(), userId))?.enabled === 1;
+  const origin = (req: Request) => `${req.protocol}://${req.get('host')}`;
 
-  await ensureSchema(db);
-  let config: Easy2faConfig = loadConfig(plugins);
-  await context.permissions.register(MANAGE_PERMISSION, '管理两步验证（对单个用户强制关闭）');
+  /* ---------- attempt limits (per pending user, in memory) ---------- */
+  const failures = new Map<number, number[]>();
+  const recent = (userId: number) => (failures.get(userId) ?? []).filter((time) => Date.now() - time < WINDOW);
+  const fail = (userId: number) => { const list = recent(userId); list.push(Date.now()); failures.set(userId, list); return MAX_FAILURES - list.length; };
 
-  /* ------------------------------------------------------------ 内部工具 */
+  /* ---------- the challenge ---------- */
+  auth.challenge({
+    id: PLUGIN_ID,
+    label: '两步验证',
+    order: 10,
+    needed: async (user) => config.mode === 'strict' || (config.mode === 'optional' && await enabledFor(user.id)),
+    url: CHALLENGE
+  });
 
-  const rowFor = async (userId: number) => getTwoFactor(db, userId);
-  /** 该用户是否被要求两步验证：已启用，或站点处于严格模式。 */
-  const userNeedsChallenge = async (userId: number): Promise<boolean> => {
-    if (config.mode === 'off') return false;
-    const row = await rowFor(userId);
-    return config.mode === 'strict' || Boolean(row?.enabled === 1);
+  const pendingUser = async (req: Request) => {
+    const pending = auth.pending(req);
+    return pending && pending.remaining[0] === PLUGIN_ID ? ctx.users.findById(pending.userId) : undefined;
   };
-
-  // 挑战失败滑动窗口（进程内；重启即清零，作为轻量防爆破层）。
-  const challengeFailures = new Map<string, number[]>();
-  function isLockedOut(scope: string, now: number): boolean {
-    return (challengeFailures.get(scope) ?? []).filter((t) => now - t < ATTEMPT_WINDOW_MS).length >= ATTEMPT_MAX_FAILURES;
-  }
-  function recordFailure(scope: string, now: number): void {
-    const hits = (challengeFailures.get(scope) ?? []).filter((t) => now - t < ATTEMPT_WINDOW_MS);
-    hits.push(now);
-    challengeFailures.set(scope, hits);
-    if (challengeFailures.size > 5000) for (const [k, v] of challengeFailures) if (!v.some((t) => now - t < ATTEMPT_WINDOW_MS)) challengeFailures.delete(k);
-  }
-  function clearFailures(scope: string): void { challengeFailures.delete(scope); }
-
-  /** 当前挑战/绑定的目标用户：优先 pending（密码已过、会话未发），其次已登录用户。 */
-  function subjectOf(session: SessionLike): number {
-    return session.easy2faPendingUserId ?? session.userId ?? 0;
-  }
-
-  async function passkeyReadyFor(userId: number): Promise<boolean> {
-    if (!config.webauthnEnable) return false;
-    const keys = await listPasskeys(db, userId);
-    return keys.length > 0;
-  }
-
-  /** 为待绑定流程准备密钥（复用会话中已有的，避免反复刷新换码）。 */
-  async function prepareSetupSecret(req: Request, userId: number): Promise<string> {
-    let secret = req.session.easy2faSetupSecret ?? '';
-    if (!secret) {
-      secret = generateSecret();
-      req.session.easy2faSetupSecret = secret;
-      await upsertPendingSecret(db, userId, secret, Date.now());
-    }
-    return secret;
-  }
-
-  /* ------------------------------------------------------------ POST /login 接管 */
-
-  const loginHandler: RequestHandler = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      if (config.mode === 'off') return next();
-      const username = text(req.body.username);
-      const password = text(req.body.password);
-      if (!username || !password) return next();
-      const user = await Promise.resolve(auth.authenticate(username, password)).catch(() => undefined);
-      if (!user) return next(); // 密码错误交还基础/限流处理器渲染统一错误
-
-      if (!(await userNeedsChallenge(user.id))) return next();
-
-      // 需要两步验证：不发正式会话，进入挑战/绑定流程。
-      req.session.easy2faPendingUserId = user.id;
-      req.session.easy2faSetupSecret = undefined;
-      const row = await rowFor(user.id);
-      if (row?.enabled === 1) return res.redirect(CHALLENGE_URL);
-
-      if (config.mode !== 'strict') return next(); // optional 且未启用：正常放行
-      await prepareSetupSecret(req, user.id);
-      return res.redirect(SETUP_URL);
-    } catch (error) {
-      console.error(`[${PLUGIN_ID}] login handler error:`, error);
-      next(error);
-    }
+  /** A fresh secret per setup attempt, kept in the session until confirmed. */
+  const setupSecret = (req: Request, userId: number) => {
+    if (req.session.e2faSetup?.userId !== userId) req.session.e2faSetup = { userId, secret: generateSecret() };
+    return req.session.e2faSetup.secret;
   };
-
-  /* ------------------------------------------------------------ 强制中间件（兜底） */
-
-  const ALLOWED_PREFIXES = ['/login', '/logout', '/plugins/easy-2fa'];
-  const enforcementMiddleware: RequestHandler = async (req, res, next: NextFunction) => {
-    try {
-      if (ALLOWED_PREFIXES.some((prefix) => req.path.startsWith(prefix))) return next();
-
-      const session = req.session as SessionLike;
-
-      // 情形 B：密码已过、等待二次验证的会话——除白名单外全部拦下。
-      if (session.easy2faPendingUserId && !session.userId) {
-        const uid = session.easy2faPendingUserId;
-        if (!(await userNeedsChallenge(uid))) {
-          session.easy2faPendingUserId = undefined; // 管理员已关闭或模式切回 off
-          return next();
-        }
-        const row = await rowFor(uid);
-        if (row?.enabled === 1) return res.redirect(CHALLENGE_URL);
-        if (config.mode === 'strict') {
-          await prepareSetupSecret(req, uid);
-          return res.redirect(SETUP_URL);
-        }
-        session.easy2faPendingUserId = undefined;
-        return next();
-      }
-
-      // 情形 A：其他登录处理器直接发了会话，但该用户需要两步验证而本会话未通过挑战。
-      if (session.userId && session.easy2faPassed !== true && (await userNeedsChallenge(session.userId))) {
-        session.easy2faPendingUserId = session.userId;
-        const row = await rowFor(session.userId);
-        if (row?.enabled === 1) return res.redirect(CHALLENGE_URL);
-        if (config.mode === 'strict') {
-          await prepareSetupSecret(req, session.userId);
-          return res.redirect(SETUP_URL);
-        }
-      }
-      return next();
-    } catch (error) {
-      console.error(`[${PLUGIN_ID}] middleware error:`, error);
-      next(error);
-    }
-  };
-  web.middleware(enforcementMiddleware);
-
-  /* ------------------------------------------------------------ 挑战页与校验 */
-
-  const renderChallenge = async (res: Response, req: Request, error: string, status = 200): Promise<void> => {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    const user = uid ? await Promise.resolve(users.findById(uid)) : undefined;
+  const renderChallenge = async (req: Request, res: Response, extra: Record<string, unknown> = {}, status = 200) => {
+    const user = await pendingUser(req);
     if (!user) return void res.redirect('/login');
-    const remaining = await countUnusedRecoveryCodes(db, user.id);
-    res.status(status).render('web/e2fa-challenge', {
-      title: '两步验证',
-      username: user.username,
-      remainingRecovery: remaining,
-      passkeyReady: await passkeyReadyFor(user.id),
-      error
-    });
+    const row = await getTwoFactor(db(), user.id);
+    if (row?.enabled !== 1) {
+      const secret = setupSecret(req, user.id);
+      return void res.status(status).render(`${PLUGIN_ID}/challenge-setup`, { layout: AUTH_LAYOUT, pageTitle: '设置两步验证', user, secret, qr: renderQrSvg(buildOtpauthUri(secret, config.issuer, user.username)), issuer: config.issuer, action: `${CHALLENGE}/setup`, ...extra });
+    }
+    const passkeys = config.webauthnEnable ? (await listPasskeys(db(), user.id)).length : 0;
+    res.status(status).render(`${PLUGIN_ID}/challenge`, { layout: AUTH_LAYOUT, pageTitle: '两步验证', user, passkeys, recovery: await countUnusedRecoveryCodes(db(), user.id), method: 'totp', ...extra });
   };
 
-  web.register('get', CHALLENGE_URL, wrap(async (req, res) => {
-    const session = req.session as SessionLike;
-    if (!subjectOf(session)) return res.redirect('/login');
-    await renderChallenge(res, req, '');
+  web.register('get', CHALLENGE, route(async (req, res) => renderChallenge(req, res)));
+  web.register('post', `${CHALLENGE}/cancel`, (req, res) => { auth.cancel(req); req.session.e2faSetup = undefined; res.redirect(303, '/login'); });
+  web.register('post', CHALLENGE, route(async (req, res) => {
+    const user = await pendingUser(req);
+    if (!user) return void res.redirect(303, '/login');
+    const method = req.body.method === 'recovery' ? 'recovery' : 'totp';
+    if (recent(user.id).length >= MAX_FAILURES) return void renderChallenge(req, res, { method, error: '尝试次数过多，请 5 分钟后再试，或者取消后重新登录。' }, 429);
+    const row = await getTwoFactor(db(), user.id);
+    let ok = false;
+    if (row?.enabled === 1 && method === 'totp') {
+      const result = verifyTotp(row.secret, text(req.body.code).replace(/\s+/g, ''), Date.now(), config.totpWindow, Number(row.last_totp_step));
+      if (result.ok) { await updateLastStep(db(), user.id, result.step); ok = true; }
+    } else if (row?.enabled === 1 && method === 'recovery') {
+      ok = Boolean(text(req.body.code)) && await consumeRecoveryCode(db(), user.id, hashRecoveryCode(text(req.body.code)), Date.now());
+    }
+    if (!ok) {
+      const left = fail(user.id);
+      const message = method === 'recovery' ? '还原码不正确，或者已经用过。' : '验证码不正确。请确认手机时间准确，并输入验证器上当前显示的 6 位数字。';
+      return void renderChallenge(req, res, { method, error: left <= 3 ? `${message}还可以再试 ${left} 次。` : message }, 401);
+    }
+    failures.delete(user.id);
+    if (method === 'recovery') req.flash('warning', `你用了一个还原码，还剩 ${await countUnusedRecoveryCodes(db(), user.id)} 个。可以在“两步验证”页面重新生成。`, '已用还原码登录');
+    await auth.passChallenge(req, res, PLUGIN_ID);
   }));
 
-  /** 挑战通用后验：成功则完成登录，失败则记录并回显。 */
-  async function handleChallenge(req: Request, res: Response, verify: () => Promise<{ ok: boolean; message: string; consumedRecovery?: boolean }>): Promise<unknown> {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    if (!uid) return res.redirect('/login');
-    const scope = `challenge:${uid}`;
-    const now = Date.now();
-    if (isLockedOut(scope, now)) return renderChallenge(res, req, '尝试次数过多，请 5 分钟后再试。', 429);
+  /* strict mode: set up during sign-in */
+  web.register('post', `${CHALLENGE}/setup`, route(async (req, res) => {
+    const user = await pendingUser(req);
+    if (!user) return void res.redirect(303, '/login');
+    const secret = req.session.e2faSetup?.userId === user.id ? req.session.e2faSetup.secret : '';
+    const result = secret ? verifyTotp(secret, text(req.body.code).replace(/\s+/g, ''), Date.now(), config.totpWindow, -1) : { ok: false, step: 0 };
+    if (!result.ok) return void renderChallenge(req, res, { error: '验证码不正确。请用验证器扫描二维码后，输入它显示的 6 位数字。' }, 401);
+    await enable(user.id, secret, result.step);
+    req.session.e2faSetup = undefined;
+    const codes = generateRecoveryCodes();
+    await replaceRecoveryCodes(db(), user.id, codes.hashes, codes.ids);
+    req.session.e2faCodes = { userId: user.id, codes: codes.codes, then: 'continue' };
+    res.redirect(303, `${CHALLENGE}/codes`);
+  }));
+  web.register('get', `${CHALLENGE}/codes`, (req, res) => {
+    const pending = req.session.e2faCodes;
+    if (!pending) return void res.redirect(req.session.userId ? ACCOUNT : '/login');
+    // Shown once. During sign-in they stay until "continue" (needed to finish signing in).
+    if (pending.then === 'account') req.session.e2faCodes = undefined;
+    res.render(`${PLUGIN_ID}/codes`, { layout: pending.then === 'continue' ? AUTH_LAYOUT : undefined, pageTitle: '保存还原码', codes: pending.codes, then: pending.then, action: pending.then === 'continue' ? `${CHALLENGE}/continue` : `${ACCOUNT}` });
+  });
+  web.register('post', `${CHALLENGE}/continue`, route(async (req, res) => {
+    const codes = req.session.e2faCodes;
+    const passed = req.session.e2faPassed;
+    req.session.e2faCodes = undefined; req.session.e2faPassed = undefined;
+    const pending = auth.pending(req);
+    if (!pending || (codes?.userId !== pending.userId && passed !== pending.userId)) return void res.redirect(303, '/login');
+    await auth.passChallenge(req, res, PLUGIN_ID);
+  }));
 
-    const result = await verify();
-    if (result.ok) {
-      clearFailures(scope);
-      delete session.easy2faPendingUserId;
-      await completeLogin(req, uid);
-      return res.redirect('/admin');
-    }
-    recordFailure(scope, now);
-    const left = ATTEMPT_MAX_FAILURES - (challengeFailures.get(scope)?.length ?? 0);
-    const hint = left > 0 && left < ATTEMPT_MAX_FAILURES ? `（还可尝试 ${left} 次）` : '';
-    return renderChallenge(res, req, `${result.message}${hint}`, 401);
+  async function enable(userId: number, secret: string, step: number) {
+    if (await enabledFor(userId)) throw new Error('两步验证已经开启');
+    await upsertPendingSecret(db(), userId, secret, Date.now());
+    await confirmBinding(db(), userId, Date.now());
+    await updateLastStep(db(), userId, step);
   }
 
-  web.register('post', `${CHALLENGE_URL}/totp`, wrap(async (req, res) => {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    await handleChallenge(req, res, async () => {
-      const row = uid ? await rowFor(uid) : undefined;
-      if (!row?.enabled) return { ok: false, message: '该账号尚未绑定两步验证。' };
-      const result = verifyTotp(row.secret, text(req.body.code), Date.now(), config.totpWindow, row.last_totp_step);
-      if (!result.ok) return { ok: false, message: '验证码错误或已过期，请重试。' };
-      await updateLastStep(db, uid, result.step);
-      return { ok: true, message: '' };
-    });
-  }));
-
-  web.register('post', `${CHALLENGE_URL}/recovery`, wrap(async (req, res) => {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    await handleChallenge(req, res, async () => {
-      const code = text(req.body.code);
-      if (!code) return { ok: false, message: '请输入还原码。' };
-      const consumed = await consumeRecoveryCode(db, uid, hashRecoveryCode(code), Date.now());
-      if (!consumed) return { ok: false, message: '还原码无效或已被使用。' };
-      return { ok: true, message: '', consumedRecovery: true };
-    });
-  }));
-
-  /* ------------------------------------------------------------ WebAuthn 挑战 */
-
-  web.register('get', `${CHALLENGE_URL}/passkey/options`, wrapJson(async (req, res) => {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    if (!uid || !(await passkeyReadyFor(uid))) return res.status(400).json({ ok: false, message: '当前不可用通行密钥登录。' });
-    const keys = await listPasskeys(db, uid);
+  /* passkey as the second step */
+  web.register('get', `${CHALLENGE}/passkey/options`, route(async (req, res) => {
+    const user = await pendingUser(req);
+    const keys = user && config.webauthnEnable ? await listPasskeys(db(), user.id) : [];
+    if (!user || !keys.length) return void res.status(400).json({ ok: false, message: '这个账号没有可用的通行密钥' });
     const challenge = generateChallenge();
-    session.easy2faWebauthnLoginChallenge = challenge;
-    res.json(buildRequestOptions({
-      rpId: req.hostname,
-      challenge,
-      allowCredentials: keys.map((key: PasskeyRow) => ({ id: key.id, type: 'public-key' as const }))
-    }));
+    req.session.e2faWebauthn = challenge;
+    res.json(buildRequestOptions({ rpId: req.hostname, challenge, allowCredentials: keys.map((key) => ({ id: key.id, type: 'public-key' as const })) }));
   }));
-
-  web.register('post', `${CHALLENGE_URL}/passkey`, wrapJson(async (req, res) => {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    const challenge = session.easy2faWebauthnLoginChallenge;
-    session.easy2faWebauthnLoginChallenge = undefined;
-    if (!uid || !challenge) return res.status(400).json({ ok: false, message: '挑战不存在，请重新发起验证。' });
-
-    // 前端提交形态：{ id, rawId, response: { clientDataJSON, authenticatorData, signature, userHandle } }
+  web.register('post', `${CHALLENGE}/passkey`, route(async (req, res) => {
+    const user = await pendingUser(req);
+    const challenge = req.session.e2faWebauthn;
+    req.session.e2faWebauthn = undefined;
+    if (!user || !challenge) return void res.status(400).json({ ok: false, message: '验证已过期，请重新开始' });
     const body = (req.body ?? {}) as { id?: string; response?: Record<string, string> };
-    const credential = body.id ? await getPasskey(db, body.id) : undefined;
-    if (!credential || credential.user_id !== uid) return res.status(400).json({ ok: false, message: '通行密钥未注册。' });
-
-    const origin = `${req.protocol}://${req.get('host')}`;
+    const key = body.id ? await getPasskey(db(), body.id) : undefined;
+    if (!key || Number(key.user_id) !== user.id) return void res.status(400).json({ ok: false, message: '这把通行密钥不属于这个账号' });
     try {
-      const { newSignCount } = verifyAssertion({
-        clientDataJSON: body.response?.clientDataJSON ?? '',
-        authenticatorData: body.response?.authenticatorData ?? '',
-        signature: body.response?.signature ?? ''
-      }, credential.public_key_cose, credential.sign_count, false, challenge, origin, req.hostname);
-
-      await updatePasskeySignCount(db, credential.id, newSignCount, Date.now());
-      clearFailures(`challenge:${uid}`);
-      delete session.easy2faPendingUserId;
-      await completeLogin(req, uid);
-      res.json({ ok: true, redirect: '/admin' });
-    } catch (error) {
-      recordFailure(`challenge:${uid}`, Date.now());
-      res.status(401).json({ ok: false, message: messageOf(error) });
-    }
+      const { newSignCount } = verifyAssertion({ clientDataJSON: body.response?.clientDataJSON ?? '', authenticatorData: body.response?.authenticatorData ?? '', signature: body.response?.signature ?? '' }, key.public_key_cose, Number(key.sign_count), false, challenge, origin(req), req.hostname);
+      await updatePasskeySignCount(db(), key.id, newSignCount, Date.now());
+      failures.delete(user.id);
+      req.session.e2faPassed = user.id;
+      res.json({ ok: true, redirect: `${CHALLENGE}/passkey/continue` });
+    } catch (error) { fail(user.id); res.status(401).json({ ok: false, message: messageOf(error) }); }
+  }));
+  web.register('get', `${CHALLENGE}/passkey/continue`, route(async (req, res) => {
+    const pending = auth.pending(req);
+    const passed = req.session.e2faPassed;
+    req.session.e2faPassed = undefined;
+    if (!pending || passed !== pending.userId) return void res.redirect('/login');
+    await auth.passChallenge(req, res, PLUGIN_ID);
   }));
 
-  /* ------------------------------------------------------------ 绑定流程 */
-
-  /** 渲染绑定页（严格模式强制 / 用户主动启用共用）。 */
-  const renderSetup = async (req: Request, res: Response, strict: boolean): Promise<void> => {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    const user = uid ? await Promise.resolve(users.findById(uid)) : undefined;
-    if (!user) return void res.redirect('/login');
-    const row = await rowFor(user.id);
-    if (row?.enabled === 1) return void res.redirect(session.userId ? SECURITY_URL : CHALLENGE_URL);
-    const secret = await prepareSetupSecret(req, user.id);
-    const uri = buildOtpauthUri(secret, config.issuer, user.username);
-    res.render('web/e2fa-setup', {
-      title: '绑定两步验证',
-      enforceStrict: strict,
-      username: user.username,
-      issuer: config.issuer,
-      secret,
-      qrSvg: renderQrSvg(uri),
-      setupAction: strict ? `${SETUP_URL}/confirm` : `${SECURITY_URL}/setup/confirm`,
-      error: param(req.query.notice)
+  /* ---------- the user's own page ---------- */
+  ui.menu('user.menu', { title: '两步验证', href: ACCOUNT, order: 81, when: () => config.mode !== 'off' });
+  const renderAccount = async (req: Request, res: Response, extra: Record<string, unknown> = {}, status = 200) => {
+    const user = (await ctx.users.findById(req.session.userId!))!;
+    const enabled = await enabledFor(user.id);
+    const setup = !enabled && config.mode !== 'off' ? setupSecret(req, user.id) : '';
+    res.status(status).render(`${PLUGIN_ID}/account`, {
+      pageTitle: '两步验证', user, enabled, mode: config.mode, webauthn: config.webauthnEnable,
+      recovery: enabled ? await countUnusedRecoveryCodes(db(), user.id) : 0, total: RECOVERY_CODE_COUNT,
+      passkeys: enabled ? await listPasskeys(db(), user.id) : [],
+      setup: setup ? { secret: setup, qr: renderQrSvg(buildOtpauthUri(setup, config.issuer, user.username)), issuer: config.issuer } : null,
+      ...extra
     });
   };
-
-  web.register('get', SETUP_URL, wrap(async (req, res) => {
-    const session = req.session as SessionLike;
-    if (!subjectOf(session)) return res.redirect('/login');
-    await renderSetup(req, res, !session.userId);
-  }));
-
-  /** 绑定确认共用逻辑：校验验证码 → 启用 + 生成还原码 → 完成登录或留在后台。 */
-  async function confirmSetup(req: Request, res: Response, expectedActionUrl: string): Promise<unknown> {
-    const session = req.session as SessionLike;
-    const uid = subjectOf(session);
-    if (!uid) return res.redirect('/login');
-    const secret = text(req.body.secret);
-    if (!secret || secret !== session.easy2faSetupSecret) {
-      return res.redirect(`${expectedActionUrl}?notice=${encodeURIComponent('绑定会话已失效，请刷新页面重试。')}`);
-    }
-    const result = verifyTotp(secret, text(req.body.code), Date.now(), config.totpWindow, -1);
-    if (!result.ok) return renderSetup(req, res, !session.userId).then(() => undefined);
-
-    const now = Date.now();
-    if ((await rowFor(uid))?.enabled === 1) {
-      // 并发确认/已启用的兜底：不覆盖既有密钥，按已启用状态分流。
-      delete session.easy2faPendingUserId;
-      session.easy2faPassed = true;
-      return res.redirect(session.userId ? `${SECURITY_URL}?notice=enabled` : '/login');
-    }
-    await upsertPendingSecret(db, uid, secret, now);
-    await confirmBinding(db, uid, now);
-    const codes = generateRecoveryCodes();
-    await replaceRecoveryCodes(db, uid, codes.hashes, codes.ids);
-    session.easy2faSetupSecret = undefined;
-
-    const wasPending = Boolean(session.easy2faPendingUserId);
-    delete session.easy2faPendingUserId;
-    session.easy2faPassed = true; // 刚刚证明持有验证器，本会话视为已通过
-    if (wasPending) await completeLogin(req, uid);
-    return res.render('web/e2fa-recovery-codes', { title: '你的还原码', codes: codes.codes });
-  }
-
-  web.register('post', `${SETUP_URL}/confirm`, wrap(async (req, res) => confirmSetup(req, res, SETUP_URL)));
-
-  /* ------------------------------------------------------------ 用户自助（账户安全页） */
-
-  const requireSecurityAccess: RequestHandler = (req, res, next) => {
-    if (!req.session?.userId) return res.redirect('/login');
-    next();
+  web.register('get', ACCOUNT, requireAuth, route(async (req, res) => renderAccount(req, res)));
+  const confirmCode = async (req: Request, userId: number) => {
+    const row = await getTwoFactor(db(), userId);
+    if (!row?.enabled) return false;
+    const result = verifyTotp(row.secret, text(req.body.code).replace(/\s+/g, ''), Date.now(), config.totpWindow, Number(row.last_totp_step));
+    if (result.ok) await updateLastStep(db(), userId, result.step);
+    return result.ok;
   };
-
-  const securityPage: RequestHandler = wrap(async (req, res) => {
-    const uid = req.session.userId!;
-    const user = await Promise.resolve(users.findById(uid));
-    if (!user) return res.status(404).render('error', { title: '用户不存在', message: '当前登录用户不存在。' });
-    const row = await rowFor(uid);
-    const notices: Record<string, string> = {
-      enabled: '两步验证已启用。',
-      disabled: '已关闭两步验证。',
-      regenerated: '已生成新的还原码，旧码全部作废。',
-      'passkey-added': '通行密钥添加成功。',
-      'passkey-deleted': '通行密钥已删除。'
-    };
-    res.render('web/e2fa-security', {
-      title: '账户安全 · 两步验证',
-      user,
-      enabled: row?.enabled === 1,
-      strictMode: config.mode === 'strict',
-      webauthnEnabled: config.webauthnEnable,
-      remainingRecovery: await countUnusedRecoveryCodes(db, uid),
-      passkeys: row?.enabled === 1 ? await listPasskeys(db, uid) : [],
-      notice: notices[param(req.query.notice)] ?? '',
-      error: param(req.query.message)
-    });
-  });
-
-  web.register('get', SECURITY_URL, requireSecurityAccess, securityPage);
-  web.register('get', `${SECURITY_URL}/setup`, requireSecurityAccess, wrap(async (req, res) => {
-    const uid = req.session.userId!;
-    const row = await rowFor(uid);
-    if (row?.enabled === 1) return res.redirect(`${SECURITY_URL}?notice=enabled`);
-    await prepareSetupSecret(req, uid);
-    await renderSetup(req, res, false);
-  }));
-  web.register('post', `${SECURITY_URL}/setup/confirm`, requireSecurityAccess, wrap(async (req, res) => confirmSetup(req, res, `${SECURITY_URL}/setup`)));
-
-  /** 自助操作的验证码确认（关闭 / 重生成还原码前必须提供有效 TOTP）。 */
-  async function requireValidTotp(req: Request, res: Response, uid: number): Promise<boolean> {
-    const row = await rowFor(uid);
-    if (!row?.enabled) return true;
-    const result = verifyTotp(row.secret, text(req.body.code), Date.now(), config.totpWindow, row.last_totp_step);
-    if (!result.ok) {
-      res.redirect(`${SECURITY_URL}?message=${encodeURIComponent('验证码错误，请输入当前验证器上的 6 位验证码。')}`);
-      return false;
-    }
-    await updateLastStep(db, uid, result.step);
-    return true;
-  }
-
-  web.register('post', `${SECURITY_URL}/disable`, requireSecurityAccess, wrap(async (req, res) => {
-    const uid = req.session.userId!;
-    if (!(await requireValidTotp(req, res, uid))) return;
-    await removeTwoFactor(db, uid);
-    req.session.easy2faPassed = undefined;
-    res.redirect(`${SECURITY_URL}?notice=disabled`);
-  }));
-
-  web.register('post', `${SECURITY_URL}/regenerate-recovery`, requireSecurityAccess, wrap(async (req, res) => {
-    const uid = req.session.userId!;
-    if (!(await requireValidTotp(req, res, uid))) return;
+  web.register('post', `${ACCOUNT}/enable`, requireAuth, route(async (req, res) => {
+    const userId = req.session.userId!;
+    const secret = req.session.e2faSetup?.userId === userId ? req.session.e2faSetup.secret : '';
+    const result = secret ? verifyTotp(secret, text(req.body.code).replace(/\s+/g, ''), Date.now(), config.totpWindow, -1) : { ok: false, step: 0 };
+    if (!result.ok) return void renderAccount(req, res, { error: '验证码不正确。请扫描二维码后输入验证器显示的 6 位数字。' }, 400);
+    await enable(userId, secret, result.step);
+    req.session.e2faSetup = undefined;
     const codes = generateRecoveryCodes();
-    await replaceRecoveryCodes(db, uid, codes.hashes, codes.ids);
-    res.render('web/e2fa-recovery-codes', { title: '你的还原码', codes: codes.codes });
+    await replaceRecoveryCodes(db(), userId, codes.hashes, codes.ids);
+    req.session.e2faCodes = { userId, codes: codes.codes, then: 'account' };
+    req.flash('success', '两步验证已开启。下次登录时需要输入验证码。');
+    res.redirect(303, `${CHALLENGE}/codes`);
   }));
-
-  /* ---- 通行密钥管理 ---- */
-  web.register('get', `${SECURITY_URL}/passkeys/options`, requireSecurityAccess, wrapJson(async (req, res) => {
-    const uid = req.session.userId!;
-    const row = await rowFor(uid);
-    if (row?.enabled !== 1) return res.status(400).json({ ok: false, message: '请先启用两步验证。' });
-    const user = await Promise.resolve(users.findById(uid));
-    const existing = await listPasskeys(db, uid);
+  web.register('post', `${ACCOUNT}/disable`, requireAuth, route(async (req, res) => {
+    if (config.mode === 'strict') return void renderAccount(req, res, { error: '站点要求所有账号使用两步验证，不能关闭。' }, 400);
+    if (!await confirmCode(req, req.session.userId!)) return void renderAccount(req, res, { error: '验证码不正确，没有关闭。' }, 400);
+    await removeTwoFactor(db(), req.session.userId!);
+    req.flash('success', '已关闭两步验证。');
+    res.redirect(303, ACCOUNT);
+  }));
+  web.register('post', `${ACCOUNT}/recovery`, requireAuth, route(async (req, res) => {
+    if (!await confirmCode(req, req.session.userId!)) return void renderAccount(req, res, { error: '验证码不正确，还原码没有更换。' }, 400);
+    const codes = generateRecoveryCodes();
+    await replaceRecoveryCodes(db(), req.session.userId!, codes.hashes, codes.ids);
+    req.session.e2faCodes = { userId: req.session.userId!, codes: codes.codes, then: 'account' };
+    req.flash('success', '已生成新的还原码，旧的全部失效。');
+    res.redirect(303, `${CHALLENGE}/codes`);
+  }));
+  web.register('get', `${ACCOUNT}/passkeys/options`, requireAuth, route(async (req, res) => {
+    const userId = req.session.userId!;
+    if (!config.webauthnEnable || !await enabledFor(userId)) return void res.status(400).json({ ok: false, message: '请先开启两步验证' });
+    const user = (await ctx.users.findById(userId))!;
     const challenge = generateChallenge();
-    (req.session as SessionLike).easy2faWebauthnRegisterChallenge = challenge;
-    res.json(buildCreationOptions({
-      rpName: config.issuer,
-      rpId: req.hostname,
-      origin: `${req.protocol}://${req.get('host')}`,
-      userName: user?.username ?? `user-${uid}`,
-      userIdHandle: Buffer.from(`easy2fa:${uid}`).toString('base64url'),
-      challenge,
-      excludeCredentials: existing.map((key) => ({ id: key.id, type: 'public-key' as const }))
-    }));
+    req.session.e2faWebauthn = challenge;
+    res.json(buildCreationOptions({ rpName: config.issuer, rpId: req.hostname, origin: origin(req), userName: user.username, userIdHandle: Buffer.from(`easy2fa:${userId}`).toString('base64url'), challenge, excludeCredentials: (await listPasskeys(db(), userId)).map((key) => ({ id: key.id, type: 'public-key' as const })) }));
   }));
-
-  web.register('post', `${SECURITY_URL}/passkeys/register`, requireSecurityAccess, wrapJson(async (req, res) => {
-    const uid = req.session.userId!;
-    const row = await rowFor(uid);
-    if (row?.enabled !== 1) return res.json({ ok: false, message: '请先启用两步验证。' });
-    const challenge = (req.session as SessionLike).easy2faWebauthnRegisterChallenge;
-    (req.session as SessionLike).easy2faWebauthnRegisterChallenge = undefined;
-    if (!challenge) return res.json({ ok: false, message: '注册会话已过期，请重试。' });
-
-    const body = (req.body ?? {}) as Record<string, never>;
-    const response = (body as { response?: Record<string, string> }).response ?? {};
-    const verified = verifyRegistration(
-      { clientDataJSON: response.clientDataJSON ?? '', attestationObject: response.attestationObject ?? '' },
-      challenge,
-      `${req.protocol}://${req.get('host')}`,
-      req.hostname
-    );
-    const name = text(String((body as { name?: string }).name ?? '')).slice(0, 40);
-    await addPasskey(db, { id: verified.credentialId, user_id: uid, public_key_cose: verified.publicKeyCose, sign_count: verified.signCount, name, created_at: Date.now(), last_used_at: null });
-    res.json({ ok: true, message: '通行密钥已添加。' });
-  }));
-
-  web.register('post', `${SECURITY_URL}/passkeys/delete`, requireSecurityAccess, wrap(async (req, res) => {
-    await deletePasskey(db, req.session.userId!, text(req.body.id));
-    res.redirect(`${SECURITY_URL}?notice=passkey-deleted`);
-  }));
-
-  /* ------------------------------------------------------------ 管理端 */
-
-  const requireManage = (): RequestHandler => async (req, res, next) => {
-    if (!req.session?.userId) return res.redirect('/login');
-    const allowed = await Promise.resolve(context.permissions.has(req.session.userId, MANAGE_PERMISSION)).catch(() => false);
-    if (!allowed) return res.status(403).render('error', { title: '权限不足', message: '你没有管理两步验证的权限。' });
-    next();
-  };
-  const requireManageGuard = requireManage();
-
-  const modeLabels: Record<Easy2faConfig['mode'], string> = { off: '关闭', optional: '开启（用户自选）', strict: '严格开启（全员强制）' };
-
-  const adminPage: RequestHandler = wrap(async (_req, res) => {
-    const allUsers = await Promise.resolve(users.list());
-    const rows = [];
-    for (const user of allUsers) {
-      const row = await rowFor(user.id);
-      rows.push({
-        user_id: user.id,
-        username: user.username,
-        is_super_admin: user.is_super_admin,
-        enabled: row?.enabled === 1,
-        pending: row !== undefined && row.enabled !== 1,
-        confirmed_at: row?.confirmed_at ?? null,
-        remainingRecovery: row ? await countUnusedRecoveryCodes(db, user.id) : 0,
-        passkeyCount: row ? (await listPasskeys(db, user.id)).length : 0
-      });
-    }
-    res.render('admin/easy-2fa', {
-      title: '两步验证 · 用户管理',
-      rows,
-      modeLabel: modeLabels[config.mode],
-      settingsUrl: SETTINGS_URL,
-      notice: param(_req.query.notice)
-    });
-  });
-
-  const disableUserHandler: RequestHandler = wrap(async (req, res) => {
-    const uid = asId(req.params.id);
-    const row = await rowFor(uid);
-    if (!uid || !row) return res.redirect(`${ADMIN_ROOT}?notice=missing`);
-    await removeTwoFactor(db, uid);
-    res.redirect(`${ADMIN_ROOT}?notice=disabled`);
-  });
-
-  const settingsView: RequestHandler = wrap((_req, res) => {
-    res.render('admin/easy-2fa-settings', { title: '两步验证 · 设置', config, notice: param(_req.query.notice) });
-  });
-  const settingsSave: RequestHandler = wrap(async (req, res) => {
+  web.register('post', `${ACCOUNT}/passkeys`, requireAuth, route(async (req, res) => {
+    const userId = req.session.userId!;
+    const challenge = req.session.e2faWebauthn;
+    req.session.e2faWebauthn = undefined;
+    if (!challenge || !config.webauthnEnable) return void res.status(400).json({ ok: false, message: '注册已过期，请重试' });
     try {
-      const next = parseSettingsForm((req.body ?? {}) as Record<string, unknown>);
-      saveConfig(plugins, next);
-      config = next;
-      res.redirect(`${SETTINGS_URL}?notice=saved`);
-    } catch (error) {
-      res.status(400).render('admin/easy-2fa-settings', { title: '两步验证 · 设置', config, notice: `保存失败：${messageOf(error)}` });
-    }
-  });
-  const settingsReset: RequestHandler = wrap(async (_req, res) => {
-    const defaults = normalizeConfig(undefined);
-    saveConfig(plugins, defaults);
-    config = defaults;
-    res.redirect(`${SETTINGS_URL}?notice=reset`);
-  });
+      const response = ((req.body ?? {}) as { response?: Record<string, string> }).response ?? {};
+      const verified = verifyRegistration({ clientDataJSON: response.clientDataJSON ?? '', attestationObject: response.attestationObject ?? '' }, challenge, origin(req), req.hostname);
+      await addPasskey(db(), { id: verified.credentialId, user_id: userId, public_key_cose: verified.publicKeyCose, sign_count: verified.signCount, name: text(req.body.name).slice(0, 40) || '通行密钥', created_at: Date.now(), last_used_at: null });
+      res.json({ ok: true, message: '通行密钥已添加' });
+    } catch (error) { res.status(400).json({ ok: false, message: messageOf(error) }); }
+  }));
+  web.register('post', `${ACCOUNT}/passkeys/:id/delete`, requireAuth, route(async (req, res) => {
+    await deletePasskey(db(), req.session.userId!, String(req.params.id));
+    req.flash('success', '已删除通行密钥。');
+    res.redirect(303, ACCOUNT);
+  }));
+  web.register('get', '/profile/security', (_req, res) => res.redirect(301, ACCOUNT));
 
-  web.register('get', ADMIN_ROOT, requireAuth, checkPermission(MANAGE_PERMISSION), adminPage);
-  web.register('post', `${ADMIN_ROOT}/user/:id/disable`, requireAuth, checkPermission(MANAGE_PERMISSION), disableUserHandler);
-  web.register('get', SETTINGS_URL, requireAuth, checkPermission(MANAGE_PERMISSION), settingsView);
-  web.register('post', SETTINGS_URL, requireAuth, checkPermission(MANAGE_PERMISSION), settingsSave);
-  web.register('post', `${SETTINGS_URL}/reset`, requireAuth, checkPermission(MANAGE_PERMISSION), settingsReset);
+  /* ---------- admin ---------- */
+  admin.registerMenu({ title: '两步验证', link: ADMIN, group: 'users', order: 35, permission: 'easy-2fa:manage' });
+  admin.registerSettings({ label: '两步验证', link: `${ADMIN}#settings`, description: '验证器（TOTP）、还原码和通行密钥' });
+  web.register('get', '/admin/easy-2fa', (_req, res) => res.redirect(301, ADMIN));
+  const manage = [requireAuth, checkPermission('easy-2fa:manage')];
+  web.register('get', ADMIN, ...manage, route(async (_req, res) => {
+    const status = await statusByUser(db());
+    const users = await ctx.users.list({ limit: 500 });
+    res.render(`${PLUGIN_ID}/admin`, { pageTitle: '两步验证', config, rows: users.map((user) => ({ user, ...(status.get(user.id) ?? { enabled: false, confirmedAt: null, recovery: 0, passkeys: 0 }) })) });
+  }));
+  web.register('post', `${ADMIN}/settings`, ...manage, route(async (req, res) => {
+    const next = parseSettingsForm(req.body ?? {});
+    const turnedStrict = next.mode === 'strict' && config.mode !== 'strict';
+    config = next;
+    await ctx.plugins.setConfig(PLUGIN_ID, config);
+    req.flash(turnedStrict ? 'warning' : 'success', turnedStrict ? '已改为强制模式：还没设置两步验证的用户（包括你）会在下次登录时被要求设置。' : '设置已保存。');
+    res.redirect(303, ADMIN);
+  }));
+  web.register('post', `${ADMIN}/users/:id/disable`, ...manage, route(async (req, res) => {
+    const user = await ctx.users.findById(parseId(req.params.id) ?? 0);
+    if (user) await removeTwoFactor(db(), user.id);
+    req.flash('success', user ? `已关闭 ${user.username} 的两步验证${config.mode === 'strict' ? '，TA 下次登录时需要重新设置' : ''}。` : '用户不存在。');
+    res.redirect(303, ADMIN);
+  }));
 
-  // 后台扩展：侧栏菜单 + 插件列表设置入口
-  hooks.on('admin:menu', (menu: Array<{ title: string; link: string }>) => [...menu, { title: '两步验证', link: ADMIN_ROOT }]);
-  admin.registerCustomSetting({ label: '两步验证设置', link: SETTINGS_URL });
-
-  /* ------------------------------------------------------------ 登录路由接管 */
-
-  web.register('post', '/login', loginHandler);
-
-  /* ------------------------------------------------------------ 定时清理（Effect 自动释放） */
-
-  context.effect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      for (const [scope, hits] of challengeFailures) {
-        const alive = hits.filter((t) => now - t < ATTEMPT_WINDOW_MS);
-        if (alive.length) challengeFailures.set(scope, alive);
-        else challengeFailures.delete(scope);
-      }
-    }, 60 * 60 * 1000);
+  ctx.effect(() => {
+    const timer = setInterval(() => { for (const [id] of failures) if (!recent(id).length) failures.delete(id); }, 3600_000);
     timer.unref?.();
     return () => clearInterval(timer);
   });
-
-  context.logger.info(`easy-2fa activated (mode=${config.mode}, webauthn=${config.webauthnEnable}, totpWindow=±${config.totpWindow})`);
+  ctx.logger.info(`activated (mode=${config.mode}, passkeys=${config.webauthnEnable})`);
 }

@@ -1,0 +1,40 @@
+<%#
+  Two-factor · admin page: mode settings and per-user status.
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><div class="stack" data-lp-plugin="easy-2fa">
+  <div class="page-header"><div><h1>两步验证</h1><p>用手机验证器（TOTP）保护登录。用户丢了手机时，可以在这里关闭 TA 的两步验证。</p></div></div>
+
+  <form class="card stack" id="settings" method="post" action="/admin/two-factor/settings" data-dirty-guard>
+    <fieldset class="field">
+      <legend>模式</legend>
+      <div class="e2fa-modes">
+        <label class="choice"><input type="radio" name="mode" value="off"<%= config.mode === 'off' ? ' checked' : '' %>><span><strong>关闭</strong><small>不使用两步验证。</small></span></label>
+        <label class="choice"><input type="radio" name="mode" value="optional"<%= config.mode === 'optional' ? ' checked' : '' %>><span><strong>可选</strong><small>用户可以在“两步验证”页面自行开启。</small></span></label>
+        <label class="choice"><input type="radio" name="mode" value="strict"<%= config.mode === 'strict' ? ' checked' : '' %>><span><strong>强制</strong><small>所有账号都必须开启，未设置的人会在下次登录时设置。</small></span></label>
+      </div>
+    </fieldset>
+    <div class="form-row">
+      <%- include('partials/field', { form: { values: { issuer: config.issuer }, errors: {} }, name: 'issuer', label: '验证器里显示的名称', help: '通常写站点名称', attrs: 'maxlength="60"' }) %>
+      <%- include('partials/field', { form: { values: { totp_window: config.totpWindow }, errors: {} }, name: 'totp_window', label: '允许的时间误差', type: 'select', options: [{ value: 0, label: '不允许（最严格）' }, { value: 1, label: '前后 30 秒（推荐）' }, { value: 2, label: '前后 60 秒' }, { value: 3, label: '前后 90 秒' }] }) %>
+    </div>
+    <label class="check"><input type="checkbox" name="webauthn_enable"<%= config.webauthnEnable ? ' checked' : '' %>><span>允许用通行密钥代替验证码<small>用户需要先开启两步验证，再在自己的页面添加通行密钥。需要 HTTPS。</small></span></label>
+    <div><button class="btn btn-primary" type="submit">保存设置</button></div>
+  </form>
+
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>用户</th><th>状态</th><th class="col-num">还原码</th><th class="col-num">通行密钥</th><th class="col-actions"><span class="visually-hidden">操作</span></th></tr></thead>
+    <tbody><% for (const row of rows) { %><tr>
+      <td><strong><%= row.user.username %></strong><div class="row-sub"><%= row.user.group_name %></div></td>
+      <td><% if (row.enabled) { %><span class="badge badge-published">已开启</span><div class="row-sub"><%= row.confirmedAt ? formatDate(new Date(row.confirmedAt).toISOString(), { time: false }) : '' %></div><% } else { %><span class="badge badge-draft"><%= config.mode === 'strict' ? '下次登录时设置' : '未开启' %></span><% } %></td>
+      <td class="col-num"><%= row.enabled ? row.recovery : '—' %></td>
+      <td class="col-num"><%= row.enabled ? row.passkeys : '—' %></td>
+      <td class="col-actions"><% if (row.enabled) { %><form method="post" action="/admin/two-factor/users/<%= row.user.id %>/disable" data-confirm="关闭 <%= row.user.username %> 的两步验证，并删除 TA 的密钥、还原码和通行密钥。请先确认对方的身份。" data-confirm-title="关闭两步验证" data-confirm-text="关闭" data-confirm-danger><button class="btn btn-sm" type="submit">关闭</button></form><% } %></td>
+    </tr><% } %></tbody>
+  </table></div>
+</div>

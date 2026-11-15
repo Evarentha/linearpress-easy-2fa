@@ -1,162 +1,75 @@
 /*
- * Easy 2FA Front-End Script
+ * Two-Factor Sign-In Client
  *
- * Progressive-enhancement script for the challenge and security pages.
+ * Challenge method switch, passkey sign-in and registration, recovery code saving.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
-
-/**
- * Two-step verification - front-end script.
- *  1. Challenge page: switching between the TOTP / recovery-code forms + WebAuthn passkey
- *     login (does not consume recovery codes).
- *  2. Account security page: adding passkeys (navigator.credentials.create).
- * Everything is progressive enhancement: when scripts are unavailable, the TOTP and
- * recovery-code flows are unaffected.
- *
- * @since 1.0.0
- */
-
 (() => {
-  'use strict';
+  const LP = window.LinearPress;
+  const b64uToBytes = (value) => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+  const bytesToB64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const say = (message) => (LP?.toast ? LP.toast(message, 'danger') : window.alert(message));
+  const cancelled = (error) => error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'AbortError');
 
-  /* ---------------- Base64URL 工具（BufferSource ↔ 字符串） ---------------- */
-  function b64uToBytes(value) {
-    const buffer = atob(value.replace(/-/g, '+').replace(/_/g, '/').replace(/\s/g, ''));
-    return Uint8Array.from(buffer, (c) => c.charCodeAt(0));
-  }
-  function bytesToB64u(bytes) {
-    return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  }
+  /* challenge: switch between authenticator code and recovery code */
+  document.querySelectorAll('[data-e2fa-switch]').forEach((button) => button.addEventListener('click', () => {
+    const target = button.dataset.e2faSwitch;
+    document.querySelectorAll('[data-e2fa-panel]').forEach((panel) => { panel.hidden = panel.dataset.e2faPanel !== target; });
+    document.querySelectorAll('[data-e2fa-switch]').forEach((other) => { other.hidden = other.dataset.e2faSwitch === target; });
+    document.querySelector(`[data-e2fa-panel="${target}"] input[name=code]`)?.focus();
+  }));
+  // Six digits entered: submit straight away.
+  document.querySelectorAll('[data-e2fa-panel="totp"] input[name=code]').forEach((input) => input.addEventListener('input', () => {
+    if (/^\d{6}$/.test(input.value.replace(/\s/g, ''))) input.form.requestSubmit();
+  }));
 
-  async function postJson(url, payload) {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify(payload || {})
-    });
-    return { ok: response.ok, data: await response.json().catch(() => ({})) };
-  }
-
-  function showError(message) {
-    let box = document.querySelector('.e2fa-error[data-dynamic]');
-    if (!box) {
-      box = document.createElement('p');
-      box.className = 'e2fa-error';
-      box.setAttribute('data-dynamic', '');
-      const page = document.querySelector('.e2fa-page');
-      if (page && page.parentNode) page.parentNode.insertBefore(box, page);
-      else document.body.prepend(box);
-    }
-    box.textContent = message;
-  }
-
-  /* ---------------- 挑战页：方式切换 ---------------- */
-  function initTabs() {
-    const tabs = Array.from(document.querySelectorAll('.e2fa-method-tab'));
-    if (!tabs.length) return;
-    const panels = Array.from(document.querySelectorAll('.e2fa-method-panel'));
-    const activate = (name) => {
-      tabs.forEach((tab) => tab.setAttribute('data-active', String(tab.dataset.method === name)));
-      panels.forEach((panel) => panel.setAttribute('data-active', String(panel.dataset.method === name)));
-    };
-    tabs.forEach((tab) => tab.addEventListener('click', () => activate(tab.dataset.method)));
-    activate(tabs.some((t) => t.dataset.method === 'totp') ? 'totp' : (tabs[0]?.dataset.method || 'totp'));
-  }
-
-  /* ---------------- WebAuthn：通行密钥登录 ---------------- */
-  async function loginWithPasskey(button) {
-    const url = button.dataset.optionsUrl;
+  /* passkey as the second step */
+  document.querySelectorAll('[data-e2fa-passkey-login]').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.PublicKeyCredential) return say('这个浏览器不支持通行密钥');
+    button.disabled = true;
     try {
-      button.disabled = true;
-      const optionsResponse = await fetch(url, { headers: { accept: 'application/json' } });
-      if (!optionsResponse.ok) throw new Error((await optionsResponse.json().catch(() => ({}))).message || '无法获取挑战。');
-      const options = await optionsResponse.json();
-
-      const credential = await navigator.credentials.get({
-        publicKey: {
-          challenge: b64uToBytes(options.challenge),
-          rpId: options.rpId,
-          timeout: options.timeout || 60000,
-          userVerification: options.userVerification || 'preferred',
-          allowCredentials: (options.allowCredentials || []).map((d) => ({ id: b64uToBytes(d.id), type: d.type, transports: d.transports }))
-        }
-      });
-      if (!credential) throw new Error('未获取到通行密钥。');
-
-      const assertion = await postJson(button.dataset.verifyUrl, {
-        id: credential.id,
-        rawId: bytesToB64u(credential.rawId),
-        response: {
-          clientDataJSON: bytesToB64u(credential.response.clientDataJSON),
-          authenticatorData: bytesToB64u(credential.response.authenticatorData),
-          signature: bytesToB64u(credential.response.signature),
-          userHandle: credential.response.userHandle ? bytesToB64u(credential.response.userHandle) : null
-        }
-      });
-      if (!assertion.ok || !assertion.data.ok) throw new Error(assertion.data.message || '通行密钥验证失败。');
-      window.location.assign(assertion.data.redirect || '/admin');
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === 'NotAllowedError')) showError(error.message || '通行密钥验证失败。');
-      button.disabled = false;
-    }
-  }
-
-  /* ---------------- 账户安全页：注册新通行密钥 ---------------- */
-  async function registerPasskey(button) {
-    try {
-      button.disabled = true;
       const optionsResponse = await fetch(button.dataset.optionsUrl, { headers: { accept: 'application/json' } });
-      if (!optionsResponse.ok) throw new Error((await optionsResponse.json().catch(() => ({}))).message || '无法获取注册挑战。');
       const options = await optionsResponse.json();
+      if (!optionsResponse.ok) throw new Error(options.message || '无法开始验证');
+      const credential = await navigator.credentials.get({ publicKey: { challenge: b64uToBytes(options.challenge), rpId: options.rpId, timeout: options.timeout || 60000, userVerification: options.userVerification || 'preferred', allowCredentials: (options.allowCredentials || []).map((d) => ({ id: b64uToBytes(d.id), type: d.type })) } });
+      const data = await LP.postJson(button.dataset.verifyUrl, { id: credential.id, response: { clientDataJSON: bytesToB64u(credential.response.clientDataJSON), authenticatorData: bytesToB64u(credential.response.authenticatorData), signature: bytesToB64u(credential.response.signature) } });
+      location.assign(data.redirect);
+    } catch (error) { if (!cancelled(error)) say(error.message || '通行密钥验证失败'); button.disabled = false; }
+  }));
 
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge: b64uToBytes(options.challenge),
-          rp: options.rp,
-          user: { ...options.user, id: b64uToBytes(options.user.id) },
-          pubKeyCredParams: options.pubKeyCredParams,
-          timeout: options.timeout || 60000,
-          attestation: options.attestation || 'none',
-          excludeCredentials: (options.excludeCredentials || []).map((d) => ({ id: b64uToBytes(d.id), type: d.type })),
-          authenticatorSelection: options.authenticatorSelection
-        }
-      });
-      if (!credential) throw new Error('未创建任何凭证。');
+  /* register a passkey on the account page */
+  document.querySelectorAll('[data-e2fa-passkey-register]').forEach((button) => button.addEventListener('click', async () => {
+    if (!window.PublicKeyCredential) return say('这个浏览器不支持通行密钥');
+    button.disabled = true;
+    try {
+      const optionsResponse = await fetch(button.dataset.optionsUrl, { headers: { accept: 'application/json' } });
+      const options = await optionsResponse.json();
+      if (!optionsResponse.ok) throw new Error(options.message || '无法开始注册');
+      const credential = await navigator.credentials.create({ publicKey: { ...options, challenge: b64uToBytes(options.challenge), user: { ...options.user, id: b64uToBytes(options.user.id) }, excludeCredentials: (options.excludeCredentials || []).map((d) => ({ id: b64uToBytes(d.id), type: d.type })) } });
+      const name = navigator.userAgentData?.platform || (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone / iPad' : /Android/.test(navigator.userAgent) ? 'Android 设备' : /Mac/.test(navigator.userAgent) ? 'Mac' : /Windows/.test(navigator.userAgent) ? 'Windows 电脑' : '通行密钥');
+      await LP.postJson(button.dataset.registerUrl, { name, response: { clientDataJSON: bytesToB64u(credential.response.clientDataJSON), attestationObject: bytesToB64u(credential.response.attestationObject) } });
+      location.reload();
+    } catch (error) { if (!cancelled(error)) say(error.message || '通行密钥添加失败'); button.disabled = false; }
+  }));
 
-      const result = await postJson(button.dataset.registerUrl, {
-        id: credential.id,
-        rawId: bytesToB64u(credential.rawId),
-        type: credential.type,
-        response: {
-          clientDataJSON: bytesToB64u(credential.response.clientDataJSON),
-          attestationObject: bytesToB64u(credential.response.attestationObject)
-        },
-        name: window.prompt('为这把通行密钥起个名字（如「我的手机」）：', '') || ''
-      });
-      if (!result.ok || !result.data.ok) throw new Error(result.data.message || '通行密钥注册失败。');
-      window.location.reload();
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === 'NotAllowedError')) showError(error.message || '通行密钥注册失败。');
-      button.disabled = false;
-    }
+  /* recovery codes: require "saved" before continuing; offer a text download */
+  const codes = document.querySelector('[data-e2fa-codes]');
+  if (codes) {
+    const saved = document.querySelector('[data-e2fa-saved]');
+    const done = document.querySelector('[data-e2fa-done]');
+    const sync = () => { if (done.tagName === 'A') done.setAttribute('aria-disabled', String(!saved.checked)); else done.disabled = !saved.checked; done.classList.toggle('is-disabled', !saved.checked); };
+    saved.addEventListener('change', sync); sync();
+    done.addEventListener('click', (event) => { if (!saved.checked) { event.preventDefault(); say('请先确认已保存还原码'); } });
+    document.querySelector('[data-e2fa-download]')?.addEventListener('click', () => {
+      const text = `${document.title}\n${location.host} 两步验证还原码（每个只能用一次）\n\n${[...codes.querySelectorAll('code')].map((c) => c.textContent).join('\n')}\n`;
+      const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })), download: `${location.host}-recovery-codes.txt` });
+      link.click(); URL.revokeObjectURL(link.href); saved.checked = true; sync();
+    });
   }
-
-  /* ---------------- 初始化 ---------------- */
-  document.addEventListener('DOMContentLoaded', () => {
-    initTabs();
-    document.querySelectorAll('[data-e2fa-confirm]').forEach((button) =>
-      button.addEventListener('click', (event) => {
-        if (!window.confirm(button.dataset.e2faConfirm)) event.preventDefault();
-      }));
-    document.querySelectorAll('[data-e2fa-passkey-login]').forEach((button) =>
-      button.addEventListener('click', (event) => { event.preventDefault(); void loginWithPasskey(button); }));
-    document.querySelectorAll('[data-e2fa-passkey-register]').forEach((button) =>
-      button.addEventListener('click', (event) => { event.preventDefault(); void registerPasskey(button); }));
-  });
 })();

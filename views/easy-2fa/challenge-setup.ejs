@@ -1,0 +1,23 @@
+<%#
+  Two-factor · required setup during sign-in (strict mode, auth layout).
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><section class="auth-panel" data-lp-plugin="easy-2fa" aria-labelledby="e2fa-setup-title">
+  <h1 id="e2fa-setup-title">先设置两步验证</h1>
+  <p class="sub">站点要求所有账号使用两步验证。设置完成后就会继续登录 <strong><%= user.username %></strong>。</p>
+  <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" role="alert"><div class="alert-body"><p><%= error %></p></div></div><% } %>
+  <%- include('./setup-steps', { secret, qr, issuer, username: user.username }) %>
+  <form class="form" method="post" action="<%= action %>">
+    <div class="field">
+      <label for="e2fa-setup-code">3. 输入验证器显示的 6 位数字</label>
+      <input class="input e2fa-code" id="e2fa-setup-code" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" required>
+    </div>
+    <button class="btn btn-primary btn-lg btn-block" type="submit">完成设置</button>
+  </form>
+  <form method="post" action="/login/2fa/cancel"><button class="btn btn-ghost btn-block" type="submit">取消登录</button></form>
+</section>

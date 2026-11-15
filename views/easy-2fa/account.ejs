@@ -1,0 +1,57 @@
+<%#
+  Two-factor · the signed-in user's page: enable, disable, recovery codes, passkeys.
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><div class="wrap wrap-read stack" data-lp-plugin="easy-2fa">
+  <header class="list-head"><div><h1>两步验证</h1><p>登录时除了密码，还需要手机验证器上的一次性验证码。</p></div></header>
+  <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" role="alert"><div class="alert-body"><p><%= error %></p></div></div><% } %>
+
+  <% if (mode === 'off') { %>
+  <div class="card"><p class="muted">站点目前没有启用两步验证。</p></div>
+  <% } else if (!enabled) { %>
+  <section class="card stack" aria-labelledby="e2fa-enable">
+    <h2 id="e2fa-enable" class="section-title">开启两步验证 <span class="badge badge-draft">未开启</span></h2>
+    <%- include('./setup-steps', { secret: setup.secret, qr: setup.qr, issuer: setup.issuer, username: user.username }) %>
+    <form class="form" method="post" action="/account/two-factor/enable">
+      <div class="field">
+        <label for="e2fa-enable-code">3. 输入验证器显示的 6 位数字</label>
+        <input class="input e2fa-code" id="e2fa-enable-code" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" required>
+      </div>
+      <div><button class="btn btn-primary" type="submit">开启</button></div>
+    </form>
+  </section>
+  <% } else { %>
+  <section class="card stack" aria-labelledby="e2fa-on">
+    <h2 id="e2fa-on" class="section-title">两步验证 <span class="badge badge-published">已开启</span></h2>
+    <p>还原码还剩 <strong class="num"><%= recovery %></strong> / <%= total %> 个。<%= recovery <= 3 ? '快用完了，建议重新生成。' : '' %></p>
+    <form class="e2fa-confirm" method="post" action="/account/two-factor/recovery">
+      <label class="visually-hidden" for="e2fa-regen">当前验证码</label>
+      <input class="input e2fa-code" id="e2fa-regen" name="code" inputmode="numeric" maxlength="7" placeholder="当前验证码" required>
+      <button class="btn" type="submit">重新生成还原码</button>
+    </form>
+    <% if (mode !== 'strict') { %>
+    <form class="e2fa-confirm" method="post" action="/account/two-factor/disable" data-confirm="关闭后，登录只需要密码。" data-confirm-title="关闭两步验证" data-confirm-text="关闭" data-confirm-danger>
+      <label class="visually-hidden" for="e2fa-off">当前验证码</label>
+      <input class="input e2fa-code" id="e2fa-off" name="code" inputmode="numeric" maxlength="7" placeholder="当前验证码" required>
+      <button class="btn btn-danger" type="submit">关闭两步验证</button>
+    </form>
+    <% } else { %><p class="help">站点要求所有账号使用两步验证，不能关闭。</p><% } %>
+  </section>
+
+  <% if (webauthn) { %>
+  <section class="card stack" aria-labelledby="e2fa-passkeys">
+    <h2 id="e2fa-passkeys" class="section-title">通行密钥</h2>
+    <p class="help">在支持的设备上，可以用指纹、面容或设备密码代替验证码完成第二步。</p>
+    <% if (passkeys.length) { %>
+    <ul class="e2fa-keys"><% for (const key of passkeys) { %><li><span><strong><%= key.name || '通行密钥' %></strong><small class="muted">添加于 <%= formatDate(new Date(Number(key.created_at)).toISOString(), { time: false }) %><%= key.last_used_at ? ` · 上次使用 ${formatRelative(new Date(Number(key.last_used_at)).toISOString())}` : '' %></small></span><form method="post" action="/account/two-factor/passkeys/<%= encodeURIComponent(key.id) %>/delete" data-confirm="删除这把通行密钥？" data-confirm-title="删除通行密钥" data-confirm-text="删除" data-confirm-danger><button class="btn btn-sm btn-ghost" type="submit">删除</button></form></li><% } %></ul>
+    <% } %>
+    <div><button class="btn" type="button" data-e2fa-passkey-register data-options-url="/account/two-factor/passkeys/options" data-register-url="/account/two-factor/passkeys">添加通行密钥</button></div>
+  </section>
+  <% } %>
+  <% } %>
+</div>

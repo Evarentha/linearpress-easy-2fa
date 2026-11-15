@@ -1,0 +1,20 @@
+<%#
+  Two-factor · shared setup steps (QR code and manual key).
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><ol class="e2fa-steps">
+  <li>在手机上安装验证器，例如 Google Authenticator、Microsoft Authenticator 或 1Password。</li>
+  <li>
+    用验证器扫描二维码：
+    <div class="e2fa-qr" role="img" aria-label="两步验证二维码"><%- qr %></div>
+    <details class="e2fa-manual"><summary>无法扫码？手动输入密钥</summary>
+      <p>账号：<%= issuer %>（<%= username %>），类型：基于时间</p>
+      <div class="e2fa-secret"><code><%= secret.replace(/(.{4})/g, '$1 ').trim() %></code><button type="button" class="btn btn-sm" data-copy="<%= secret %>">复制</button></div>
+    </details>
+  </li>
+</ol>

@@ -1,0 +1,24 @@
+<%#
+  Two-factor · show new recovery codes once.
+
+  Authors:
+  MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+  worryzu <worryzu@evarentha.com> @LinearTeam
+
+  Copyright (C) 2026 Evarentha
+  SPDX-License-Identifier: GPL-3.0-or-later
+%><section class="<%= then === 'continue' ? 'auth-panel' : 'wrap wrap-read stack' %>" data-lp-plugin="easy-2fa" aria-labelledby="e2fa-codes-title">
+  <h1 id="e2fa-codes-title">保存你的还原码</h1>
+  <p class="sub">手机丢失或换机时，可以用还原码代替验证码登录。每个只能用一次。这些码只显示这一次。</p>
+  <ol class="e2fa-codes" data-e2fa-codes><% for (const code of codes) { %><li><code><%= code %></code></li><% } %></ol>
+  <div class="cluster">
+    <button type="button" class="btn" data-copy="<%= codes.join('\n') %>">全部复制</button>
+    <button type="button" class="btn" data-e2fa-download>下载为文本文件</button>
+  </div>
+  <label class="check"><input type="checkbox" data-e2fa-saved><span>我已经把还原码保存在安全的地方</span></label>
+  <% if (then === 'continue') { %>
+  <form method="post" action="<%= action %>"><button class="btn btn-primary btn-lg btn-block" type="submit" data-e2fa-done disabled>继续登录</button></form>
+  <% } else { %>
+  <a class="btn btn-primary" href="<%= action %>" data-e2fa-done aria-disabled="true">完成</a>
+  <% } %>
+</section>

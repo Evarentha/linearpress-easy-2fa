@@ -4,8 +4,8 @@
  * Configuration model for the Easy 2FA plugin.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -22,12 +22,6 @@
  *
  * @since 1.0.0
  */
-
-/** 插件注册表配置服务的最小接口（由 ctx.plugins 满足）。 */
-export interface PluginConfigService {
-  getConfig<T = unknown>(id: string): T | null;
-  setConfig(id: string, config: unknown): void;
-}
 
 /** 两步验证模式：off 关闭 | optional 开启（用户自选）| strict 严格开启（全员强制）。 */
 export type TwoFactorMode = 'off' | 'optional' | 'strict';
@@ -59,25 +53,16 @@ function asInt(value: unknown, fallback: number, min: number, max: number): numb
   return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
 }
 
-/** 合并用户配置到默认值；未知字段忽略，非法数值回退默认。 */
+/** Merge stored settings over the defaults; unknown fields are ignored, invalid values fall back. */
 export function normalizeConfig(raw: unknown): Easy2faConfig {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const defaults = getDefaultConfig();
-  const mode = input.mode === 'optional' || input.mode === 'strict' ? input.mode : 'off';
   return {
-    mode,
+    mode: input.mode === 'optional' || input.mode === 'strict' ? input.mode : 'off',
     webauthnEnable: asBoolean(input.webauthnEnable, defaults.webauthnEnable),
-    issuer: asString(input.issuer, defaults.issuer).trim() || defaults.issuer,
-    totpWindow: asInt(input.totpWindow, defaults.totpWindow, 0, 5)
+    issuer: asString(input.issuer, defaults.issuer).trim().slice(0, 60) || defaults.issuer,
+    totpWindow: asInt(input.totpWindow, defaults.totpWindow, 0, 3)
   };
-}
-
-export function loadConfig(plugins: PluginConfigService): Easy2faConfig {
-  return normalizeConfig(plugins.getConfig<unknown>('easy-2fa'));
-}
-
-export function saveConfig(plugins: PluginConfigService, config: Easy2faConfig): void {
-  plugins.setConfig('easy-2fa', config);
 }
 
 /** 从设置页表单构建配置（checkbox 为 on/undefined，数字为空回退默认）。 */

@@ -4,8 +4,8 @@
  * Standard-SQL data access for secrets, recovery codes and passkeys.
  *
  * Authors:
- * MoyuZJ <moyuzj@moyuzj.cn> @LinearTeam - Made in China with ♥
- * worryzu <worryzu@gmail.com> @LinearTeam
+ * MoyuZJ <moyuzj@evarentha.com> @LinearTeam - Made in China with ♥
+ * worryzu <worryzu@evarentha.com> @LinearTeam
  *
  * Copyright (C) 2026 Evarentha
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -19,13 +19,9 @@
  * @since 1.0.0
  */
 
-export interface Db {
-  all<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T[]> | T[];
-  get<T = Record<string, unknown>>(sql: string, ...params: unknown[]): Promise<T | undefined> | T | undefined;
-  run(sql: string, ...params: unknown[]): Promise<unknown> | unknown;
-  exec(sql: string): Promise<void> | void;
-  transaction<T>(callback: () => Promise<T> | T): Promise<T> | T;
-}
+import type { DatabaseService } from 'linearpress/plugin-api';
+
+type Db = DatabaseService;
 
 export interface TwoFactorRow { user_id: number; secret: string; enabled: number; last_totp_step: number; created_at: number; confirmed_at: number | null; }
 export interface RecoveryRow { id: string; user_id: number; code_hash: string; used: number; used_at: number | null; }
@@ -33,36 +29,26 @@ export interface PasskeyRow { id: string; user_id: number; public_key_cose: stri
 
 /** 建表（含索引）。全部为跨方言标准 SQL，主键用 UUID 文本避免方言差异；公钥以 Base64URL 文本存储。 */
 export async function ensureSchema(db: Db): Promise<void> {
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS easy2fa_users (
-      user_id INTEGER PRIMARY KEY,
-      secret TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 0,
-      last_totp_step INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      confirmed_at INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS easy2fa_recovery_codes (
-      id TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      code_hash TEXT NOT NULL,
-      used INTEGER NOT NULL DEFAULT 0,
-      used_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_easy2fa_recovery_user ON easy2fa_recovery_codes(user_id, used);
-    CREATE TABLE IF NOT EXISTS easy2fa_passkeys (
-      id TEXT PRIMARY KEY,
-      user_id INTEGER NOT NULL,
-      public_key_cose TEXT NOT NULL,
-      sign_count INTEGER NOT NULL DEFAULT 0,
-      name TEXT NOT NULL DEFAULT '',
-      created_at INTEGER NOT NULL,
-      last_used_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_easy2fa_passkeys_user ON easy2fa_passkeys(user_id);
-  `);
+  const mysql = db.dialect === 'mysql';
+  const str = (n: number) => mysql ? `VARCHAR(${n})` : 'TEXT';
+  const int = mysql ? 'INT' : 'INTEGER';
+  await db.exec([
+    `CREATE TABLE IF NOT EXISTS easy2fa_users (user_id ${int} PRIMARY KEY, secret ${str(64)} NOT NULL, enabled INT NOT NULL DEFAULT 0, last_totp_step BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, confirmed_at BIGINT NULL)`,
+    `CREATE TABLE IF NOT EXISTS easy2fa_recovery_codes (id ${str(64)} PRIMARY KEY, user_id ${int} NOT NULL, code_hash ${str(128)} NOT NULL, used INT NOT NULL DEFAULT 0, used_at BIGINT NULL)`,
+    `CREATE TABLE IF NOT EXISTS easy2fa_passkeys (id ${str(255)} PRIMARY KEY, user_id ${int} NOT NULL, public_key_cose ${mysql ? 'TEXT' : 'TEXT'} NOT NULL, sign_count BIGINT NOT NULL DEFAULT 0, name ${str(80)} NOT NULL DEFAULT '', created_at BIGINT NOT NULL, last_used_at BIGINT NULL)`
+  ].join(';\n'));
+  if (!mysql) await db.exec('CREATE INDEX IF NOT EXISTS idx_easy2fa_recovery_user ON easy2fa_recovery_codes(user_id, used); CREATE INDEX IF NOT EXISTS idx_easy2fa_passkeys_user ON easy2fa_passkeys(user_id)');
 }
 
+/** Status of every user in one query (admin list). */
+export async function statusByUser(db: Db): Promise<Map<number, { enabled: boolean; confirmedAt: number | null; recovery: number; passkeys: number }>> {
+  const rows = await db.all<{ user_id: number; enabled: number; confirmed_at: number | null; recovery: number; passkeys: number }>(
+    `SELECT u.user_id, u.enabled, u.confirmed_at,
+      (SELECT COUNT(*) FROM easy2fa_recovery_codes r WHERE r.user_id = u.user_id AND r.used = 0) AS recovery,
+      (SELECT COUNT(*) FROM easy2fa_passkeys p WHERE p.user_id = u.user_id) AS passkeys
+     FROM easy2fa_users u`);
+  return new Map(rows.map((row) => [Number(row.user_id), { enabled: Number(row.enabled) === 1, confirmedAt: row.confirmed_at ? Number(row.confirmed_at) : null, recovery: Number(row.recovery), passkeys: Number(row.passkeys) }]));
+}
 /* ------------------------------------------------------------ 用户密钥 */
 
 export async function getTwoFactor(db: Db, userId: number): Promise<TwoFactorRow | undefined> {

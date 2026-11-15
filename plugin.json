@@ -1,18 +1,22 @@
 {
   "id": "easy-2fa",
   "name": "两步验证",
-  "version": "3.0.0",
-  "description": "基于 TOTP 的两步验证（兼容 Google Authenticator 等验证器）：关闭/开启/严格开启三种模式，四词还原码单次使用，管理员可对单个用户强制关闭，可选 WebAuthn 通行密钥辅助登录。",
+  "version": "4.0.0",
+  "description": "登录时除密码外再输入手机验证器（TOTP）上的验证码；可选、强制两种模式，一次性还原码，可选通行密钥。对所有登录方式生效，包括单点登录。",
   "author": "LinearPress",
+  "icon": "2FA",
   "type": "both",
   "main": "index.ts",
-  "runtime": "cordis",
   "views": "views",
   "public": "public",
+  "settings": "/admin/two-factor",
   "styles": [
-    "easy-2fa.css?v=1.0.0"
+    { "file": "easy-2fa.css", "scope": "all", "paths": ["/login/2fa", "/account/two-factor", "/admin/two-factor"] }
   ],
   "scripts": [
-    "easy-2fa.js?v=1.0.0"
+    { "file": "easy-2fa.js", "scope": "all", "paths": ["/login/2fa", "/account/two-factor"] }
+  ],
+  "permissions": [
+    { "id": "easy-2fa:manage", "label": "管理两步验证（为用户关闭）", "group": "用户" }
   ]
 }
